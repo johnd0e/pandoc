@@ -26,7 +26,7 @@ local M = {
   _VERSION = "0.3.0"
 }
 
-local List = require 'List'
+local List = require 'pandoc.List'
 
 ------------------------------------------------------------------------
 -- The base class for pandoc's AST elements.
@@ -153,6 +153,21 @@ end
 M.Doc = M.Pandoc
 
 ------------------------------------------------------------------------
+-- Meta
+-- @section Meta
+
+--- Create a new Meta object. It sets the metatable of the given table to
+--- `Meta`.
+-- @function Meta
+-- @tparam meta table table containing document meta information
+M.Meta = {}
+M.Meta.__call = function(t, meta)
+  return setmetatable(meta, self)
+end
+setmetatable(M.Meta, M.Meta)
+
+
+------------------------------------------------------------------------
 -- MetaValue
 -- @section MetaValue
 M.MetaValue = Element:make_subtype{}
@@ -170,24 +185,24 @@ end
 --- Meta list
 -- @function MetaList
 -- @tparam {MetaValue,...} meta_values list of meta values
+M.meta_value_list_types = {
+  "MetaBlocks",
+  "MetaInlines",
+  "MetaList",
+}
+for i = 1, #M.meta_value_list_types do
+  M[M.meta_value_list_types[i]] = M.MetaValue:create_constructor(
+    M.meta_value_list_types[i],
+    function(content)
+      return List:new(content)
+    end
+  )
+end
 
 --- Meta map
 -- @function MetaMap
 -- @tparam table key_value_map a string-indexed map of meta values
-M.meta_value_types = {
-  "MetaBlocks",
-  "MetaInlines",
-  "MetaList",
-  "MetaMap",
-}
-for i = 1, #M.meta_value_types do
-  M[M.meta_value_types[i]] = M.MetaValue:create_constructor(
-    M.meta_value_types[i],
-    function(content)
-      return content
-    end
-  )
-end
+M.MetaValue:create_constructor("MetaMap", function (mm) return mm end)
 
 --- Creates string to be used in meta data.
 -- Does nothing, lua strings are meta strings.
