@@ -26,6 +26,6 @@ extra-deps:
 - pandoc-citeproc-0.12.1
 - haddock-library-1.4.3
 - tagsoup-0.14.2
-resolver: nightly
+resolver: nightly-2017-12-01
 #resolver: lts-9.14
 #compiler: ghc-7.10.3
