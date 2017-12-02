@@ -54,10 +54,10 @@ test_script:
   # The ugly echo "" hack is to avoid complaints about 0 being an invalid file
   # descriptor
   - |
-      %STACK% setup --compiler ghc-7.8.4> nul
-      %STACK% path --compiler ghc-7.8.4
-      echo "" | %STACK% clean --compiler ghc-7.8.4
-      echo "" | %STACK% %STACK_BUILD_OPTS% install pandoc pandoc-citeproc %STACK_FLAGS% --compiler ghc-7.8.4
+      %STACK% setup> nul
+      %STACK% path
+      echo "" | %STACK% clean
+      echo "" | %STACK% %STACK_BUILD_OPTS% install pandoc pandoc-citeproc %STACK_FLAGS%
 
 after_test:
     # .\ in the stack commandline seems to be .\windows\ (where the stack-appveyor.yaml is)
