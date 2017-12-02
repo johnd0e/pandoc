@@ -54,7 +54,7 @@ test_script:
   # The ugly echo "" hack is to avoid complaints about 0 being an invalid file
   # descriptor
   - |
-      %STACK% setup > nul
+      %STACK% setup --compiler ghc-7.8.4> nul
       %STACK% path
       echo "" | %STACK% clean
       echo "" | %STACK% %STACK_BUILD_OPTS% install pandoc pandoc-citeproc %STACK_FLAGS%
