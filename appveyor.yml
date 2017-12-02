@@ -55,7 +55,7 @@ test_script:
   # descriptor
   - |
       %STACK% setup --compiler ghc-7.8.4> nul
-      %STACK% path
+      %STACK% path --compiler ghc-7.8.4
       echo "" | %STACK% clean
       echo "" | %STACK% %STACK_BUILD_OPTS% install pandoc pandoc-citeproc %STACK_FLAGS% --compiler ghc-7.8.4
 
