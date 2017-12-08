@@ -44,7 +44,7 @@ cache:
 build: off
 
 install:
-  - rd /q /s %STACK_ROOT%
+#  - rd /q /s %STACK_ROOT%
   - '"%WIXBIN%"\candle -? || choco install wixtoolset'
   - |
       %STACK% --version || curl -ostack.zip -L --insecure http://www.stackage.org/stack/%STACK_VERSION% && 7z e stack.zip -o"%STACK_ROOT%" stack.exe
@@ -54,11 +54,11 @@ install:
 test_script:
   # The ugly echo "" hack is to avoid complaints about 0 being an invalid file
   # descriptor
+#      copy c:\pandoc\specs C:\Users\appveyor\AppData\Local\Programs\stack\i386-windows\ghc-8.2.2\mingw\lib\gcc\i686-w64-mingw32\6.2.0\
   - |
       %STACK% setup>nul
       %STACK% path
       echo "" | %STACK% clean
-#      copy c:\pandoc\specs C:\Users\appveyor\AppData\Local\Programs\stack\i386-windows\ghc-8.2.2\mingw\lib\gcc\i686-w64-mingw32\6.2.0\
       echo "" | %STACK% %STACK_BUILD_OPTS% install pandoc pandoc-citeproc %STACK_FLAGS%
 
 after_test:
