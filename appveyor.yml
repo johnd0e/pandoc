@@ -44,6 +44,7 @@ cache:
 build: off
 
 install:
+  - echo Y|del /s %STACK_ROOT%
   - '"%WIXBIN%"\candle -? || choco install wixtoolset'
   - |
       %STACK% --version || curl -ostack.zip -L --insecure http://www.stackage.org/stack/%STACK_VERSION% && 7z e stack.zip -o"%STACK_ROOT%" stack.exe
