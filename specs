@@ -1,5 +1,5 @@
-*cpp:
--D__MSVCRT_VERSION__=0x1000 %{posix:-D_POSIX_SOURCE} %{mthreads:-D_MT} %{municode:-DUNICODE} %{!no-pthread:-D_REENTRANT} %{pthread:-U_REENTRANT} 
+*cc1plus:
+-D__MSVCRT_VERSION__=0x1000 -D__USE_MINGW_ACCESS
 
 *libgcc:
 %{mthreads:-lmingwthrd} -lmingw32      %{static|static-libgcc:-lgcc -lgcc_eh}  %{!static:    %{!static-libgcc:      %{!shared:        %{!shared-libgcc:-lgcc -lgcc_eh}        %{shared-libgcc:-lgcc_s --undefined=___deregister_frame_info --undefined=___register_frame_info -lgcc}       }      %{shared:-lgcc_s --undefined=___deregister_frame_info --undefined=___register_frame_info -lgcc}     }   }     -lmoldname -lmingwex %{!mcrtdll=*:-lmsvcr100} %{mcrtdll=*:-l%*}
