@@ -52,7 +52,6 @@ install:
 # before_test:
 
 test_script:
-  - copy c:\pandoc\specs C:\Users\appveyor\AppData\Local\Programs\stack\i386-windows\ghc-8.2.2\mingw\lib\gcc\i686-w64-mingw32\6.2.0\
   # The ugly echo "" hack is to avoid complaints about 0 being an invalid file
   # descriptor
   - |
@@ -60,6 +59,7 @@ test_script:
       %STACK% path
       echo "" | %STACK% clean
       echo "" | %STACK% %STACK_BUILD_OPTS% install pandoc pandoc-citeproc %STACK_FLAGS%
+  - copy c:\pandoc\specs C:\Users\appveyor\AppData\Local\Programs\stack\i386-windows\ghc-8.2.2\mingw\lib\gcc\i686-w64-mingw32\6.2.0\
 
 after_test:
     # .\ in the stack commandline seems to be .\windows\ (where the stack-appveyor.yaml is)
