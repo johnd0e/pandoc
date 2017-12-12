@@ -1,5 +1,5 @@
 name:            pandoc
-version:         2.0.4
+version:         2.0.5
 cabal-version:   >= 1.10
 build-type:      Custom
 license:         GPL
@@ -25,8 +25,9 @@ description:     Pandoc is a Haskell library for converting from one markup
                  RTF, MediaWiki, DokuWiki, ZimWiki, Textile, groff man,
                  groff ms, plain text, Emacs Org-Mode, AsciiDoc,
                  Haddock markup, EPUB (v2 and v3), FictionBook2, InDesign
-                 ICML, Muse, and several kinds of HTML/JavaScript slide
-                 shows (S5, Slidy, Slideous, DZSlides, reveal.js).
+                 ICML, Muse, LaTeX beamer slides, PowerPoint, and several
+                 kinds of HTML/JavaScript slide shows (S5, Slidy, Slideous,
+                 DZSlides, reveal.js).
                  .
                  In contrast to most existing tools for converting Markdown
                  to HTML, pandoc has a modular design: it consists of a set of
@@ -98,6 +99,46 @@ data-files:
                  data/odt/Configurations2/accelerator/current.xml
                  data/odt/Thumbnails/thumbnail.png
                  data/odt/META-INF/manifest.xml
+                 -- source files for reference.pptx
+                 data/pptx/_rels/.rels
+                 data/pptx/docProps/thumbnail.jpeg
+                 data/pptx/docProps/app.xml
+                 data/pptx/docProps/core.xml
+                 data/pptx/ppt/slideLayouts/slideLayout4.xml
+                 data/pptx/ppt/slideLayouts/_rels/slideLayout9.xml.rels
+                 data/pptx/ppt/slideLayouts/_rels/slideLayout2.xml.rels
+                 data/pptx/ppt/slideLayouts/_rels/slideLayout10.xml.rels
+                 data/pptx/ppt/slideLayouts/_rels/slideLayout1.xml.rels
+                 data/pptx/ppt/slideLayouts/_rels/slideLayout3.xml.rels
+                 data/pptx/ppt/slideLayouts/_rels/slideLayout5.xml.rels
+                 data/pptx/ppt/slideLayouts/_rels/slideLayout7.xml.rels
+                 data/pptx/ppt/slideLayouts/_rels/slideLayout8.xml.rels
+                 data/pptx/ppt/slideLayouts/_rels/slideLayout11.xml.rels
+                 data/pptx/ppt/slideLayouts/_rels/slideLayout4.xml.rels
+                 data/pptx/ppt/slideLayouts/_rels/slideLayout6.xml.rels
+                 data/pptx/ppt/slideLayouts/slideLayout2.xml
+                 data/pptx/ppt/slideLayouts/slideLayout8.xml
+                 data/pptx/ppt/slideLayouts/slideLayout11.xml
+                 data/pptx/ppt/slideLayouts/slideLayout3.xml
+                 data/pptx/ppt/slideLayouts/slideLayout6.xml
+                 data/pptx/ppt/slideLayouts/slideLayout9.xml
+                 data/pptx/ppt/slideLayouts/slideLayout5.xml
+                 data/pptx/ppt/slideLayouts/slideLayout7.xml
+                 data/pptx/ppt/slideLayouts/slideLayout1.xml
+                 data/pptx/ppt/slideLayouts/slideLayout10.xml
+                 data/pptx/ppt/_rels/presentation.xml.rels
+                 data/pptx/ppt/theme/theme1.xml
+                 data/pptx/ppt/presProps.xml
+                 data/pptx/ppt/slides/_rels/slide1.xml.rels
+                 data/pptx/ppt/slides/_rels/slide2.xml.rels
+                 data/pptx/ppt/slides/slide2.xml
+                 data/pptx/ppt/slides/slide1.xml
+                 data/pptx/ppt/viewProps.xml
+                 data/pptx/ppt/tableStyles.xml
+                 data/pptx/ppt/slideMasters/_rels/slideMaster1.xml.rels
+                 data/pptx/ppt/slideMasters/slideMaster1.xml
+                 data/pptx/ppt/presentation.xml
+                 data/pptx/[Content_Types].xml
                   -- stylesheet for EPUB writer
                  data/epub.css
                  -- data for LaTeXMathML writer
@@ -108,10 +149,12 @@ data-files:
                  data/abbreviations
                  -- sample lua custom writer
                  data/sample.lua
+                 -- lua init script
+                 data/init.lua
                  -- pandoc lua module
                  data/pandoc.lua
                  -- lua List module
-                 data/List.lua
+                 data/pandoc.List.lua
                  -- sample highlighting theme
                  data/default.theme
                  -- bash completion template
@@ -320,7 +363,7 @@ library
                  tagsoup >= 0.14.2 && < 0.15,
                  base64-bytestring >= 0.1 && < 1.1,
                  zlib >= 0.5 && < 0.7,
-                 skylighting >= 0.4.4.1 && < 0.5,
+                 skylighting >= 0.5 && < 0.6,
                  data-default >= 0.4 && < 0.8,
                  temporary >= 1.1 && < 1.3,
                  blaze-html >= 0.5 && < 0.10,
@@ -328,9 +371,9 @@ library
                  yaml >= 0.8.8.2 && < 0.9,
                  scientific >= 0.2 && < 0.4,
                  vector >= 0.10 && < 0.13,
-                 hslua >= 0.9 && < 0.10,
+                 hslua >= 0.9.3 && < 0.10,
                  hslua-module-text >= 0.1.2 && < 0.2,
-                 binary >= 0.5 && < 0.9,
+                 binary >= 0.5 && < 0.10,
                  SHA >= 1.6 && < 1.7,
                  haddock-library >= 1.1 && < 1.5,
                  deepseq >= 1.3 && < 1.5,
@@ -340,7 +383,7 @@ library
                  doctemplates >= 0.2.1 && < 0.3,
                  http-client >= 0.4.30 && < 0.6,
                  http-client-tls >= 0.2.4 && < 0.4,
-                 http-types >= 0.8 && < 0.11,
+                 http-types >= 0.8 && < 0.12,
                  case-insensitive >= 1.2 && < 1.3
   if os(windows)
     cpp-options:      -D_WINDOWS
@@ -431,12 +474,14 @@ library
                    Text.Pandoc.Writers.RTF,
                    Text.Pandoc.Writers.ODT,
                    Text.Pandoc.Writers.Docx,
+                   Text.Pandoc.Writers.Powerpoint,
                    Text.Pandoc.Writers.EPUB,
                    Text.Pandoc.Writers.FB2,
                    Text.Pandoc.Writers.TEI,
                    Text.Pandoc.Writers.Muse,
                    Text.Pandoc.Writers.Math,
                    Text.Pandoc.Writers.Shared,
+                   Text.Pandoc.Writers.OOXML,
                    Text.Pandoc.Lua,
                    Text.Pandoc.PDF,
                    Text.Pandoc.UTF8,
@@ -478,6 +523,7 @@ library
                    Text.Pandoc.Readers.Org.ParserState,
                    Text.Pandoc.Readers.Org.Parsing,
                    Text.Pandoc.Readers.Org.Shared,
+                   Text.Pandoc.Lua.Packages,
                    Text.Pandoc.Lua.PandocModule,
                    Text.Pandoc.Lua.Filter,
                    Text.Pandoc.Lua.StackInstances,
@@ -494,7 +540,7 @@ library
 
 executable pandoc
   build-depends: pandoc, base >= 4.7 && < 5
-  ghc-options:   -rtsopts -with-rtsopts=-K16m -Wall -fno-warn-unused-do-bind
+  ghc-options:   -rtsopts -with-rtsopts=-K16m -Wall -fno-warn-unused-do-bind -threaded
   ghc-prof-options: -fprof-auto-exported -rtsopts -with-rtsopts=-K16m
   if flag(static)
     ld-options:     -static
@@ -562,7 +608,7 @@ test-suite test-pandoc
                   temporary >= 1.1 && < 1.3,
                   Diff >= 0.2 && < 0.4,
                   tasty >= 0.11 && < 0.13,
-                  tasty-hunit >= 0.9 && < 0.10,
+                  tasty-hunit >= 0.9 && < 0.11,
                   tasty-quickcheck >= 0.8 && < 0.10,
                   tasty-golden >= 2.3 && < 2.4,
                   QuickCheck >= 2.4 && < 2.11,

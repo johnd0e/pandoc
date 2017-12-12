@@ -40,12 +40,10 @@ import Control.Monad.Reader
 import Control.Monad.State.Strict
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
-import qualified Data.ByteString.Lazy.Char8 as BL8
 import Data.Char (isSpace, ord, toLower)
 import Data.List (intercalate, isPrefixOf, isSuffixOf)
 import qualified Data.Map as M
 import Data.Maybe (fromMaybe, isNothing, mapMaybe, maybeToList)
-import Data.Monoid ((<>))
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import Data.Time.Clock.POSIX
@@ -65,7 +63,6 @@ import Text.Pandoc.MIME (MimeType, extensionFromMimeType, getMimeType,
 import Text.Pandoc.Options
 import Text.Pandoc.Readers.Docx.StyleMap
 import Text.Pandoc.Shared hiding (Element)
-import qualified Text.Pandoc.UTF8 as UTF8
 import Text.Pandoc.Walk
 import Text.Pandoc.Writers.Math
 import Text.Pandoc.Writers.Shared (fixDisplayMath)
@@ -73,6 +70,7 @@ import Text.Printf (printf)
 import Text.TeXMath
 import Text.XML.Light as XML
 import Text.XML.Light.Cursor as XMLC
+import Text.Pandoc.Writers.OOXML
 
 data ListMarker = NoMarker
                 | BulletMarker
@@ -156,22 +154,6 @@ defaultWriterState = WriterState{
 
 type WS m = ReaderT WriterEnv (StateT WriterState m)
 
-mknode :: Node t => String -> [(String,String)] -> t -> Element
-mknode s attrs =
-  add_attrs (map (\(k,v) -> Attr (nodename k) v) attrs) .  node (nodename s)
-
-nodename :: String -> QName
-nodename s = QName{ qName = name, qURI = Nothing, qPrefix = prefix }
- where (name, prefix) = case break (==':') s of
-                             (xs,[])    -> (xs, Nothing)
-                             (ys, _:zs) -> (zs, Just ys)
-
-toLazy :: B.ByteString -> BL.ByteString
-toLazy = BL.fromChunks . (:[])
-
-renderXml :: Element -> BL.ByteString
-renderXml elt = BL8.pack "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" <>
-  UTF8.fromStringLazy (showElement elt)
 
 renumIdMap :: Int -> [Element] -> M.Map String String
 renumIdMap _ [] = M.empty
@@ -625,12 +607,12 @@ styleToOpenXml sm style =
                                [ mknode "w:u" [] () | tokFeature tokenUnderline toktype ]
                              ]
         tokStyles = tokenStyles style
-        tokFeature f toktype = maybe False f $ lookup toktype tokStyles
+        tokFeature f toktype = maybe False f $ M.lookup toktype tokStyles
         tokCol toktype = maybe "auto" (drop 1 . fromColor)
-                         $ (tokenColor =<< lookup toktype tokStyles)
+                         $ (tokenColor =<< M.lookup toktype tokStyles)
                            `mplus` defaultColor style
         tokBg toktype = maybe "auto" (drop 1 . fromColor)
-                         $ (tokenBackground =<< lookup toktype tokStyles)
+                         $ (tokenBackground =<< M.lookup toktype tokStyles)
                            `mplus` backgroundColor style
         parStyle | hasStyleName "Source Code" (sParaStyleMap sm) = Nothing
                  | otherwise = Just $
@@ -922,21 +904,22 @@ blockToOpenXML' opts (Para [Image attr alt (src,'f':'i':'g':':':tit)]) = do
   captionNode <- withParaProp (pCustomStyle "ImageCaption")
                  $ blockToOpenXML opts (Para alt)
   return $ mknode "w:p" [] (paraProps ++ contents) : captionNode
--- fixDisplayMath sometimes produces a Para [] as artifact
-blockToOpenXML' _ (Para []) = return []
-blockToOpenXML' opts (Para lst) = do
-  isFirstPara <- gets stFirstPara
-  paraProps <- getParaProps $ case lst of
-                               [Math DisplayMath _] -> True
-                               _                    -> False
-  bodyTextStyle <- pStyleM "Body Text"
-  let paraProps' = case paraProps of
-        [] | isFirstPara -> [mknode "w:pPr" [] [pCustomStyle "FirstParagraph"]]
-        []               -> [mknode "w:pPr" [] [bodyTextStyle]]
-        ps               -> ps
-  modify $ \s -> s { stFirstPara = False }
-  contents <- inlinesToOpenXML opts lst
-  return [mknode "w:p" [] (paraProps' ++ contents)]
+blockToOpenXML' opts (Para lst)
+  | null lst && not (isEnabled Ext_empty_paragraphs opts) = return []
+  | otherwise = do
+      isFirstPara <- gets stFirstPara
+      paraProps <- getParaProps $ case lst of
+                                   [Math DisplayMath _] -> True
+                                   _                    -> False
+      bodyTextStyle <- pStyleM "Body Text"
+      let paraProps' = case paraProps of
+            [] | isFirstPara -> [mknode "w:pPr" []
+                                [pCustomStyle "FirstParagraph"]]
+            []               -> [mknode "w:pPr" [] [bodyTextStyle]]
+            ps               -> ps
+      modify $ \s -> s { stFirstPara = False }
+      contents <- inlinesToOpenXML opts lst
+      return [mknode "w:p" [] (paraProps' ++ contents)]
 blockToOpenXML' opts (LineBlock lns) = blockToOpenXML opts $ linesToPara lns
 blockToOpenXML' _ b@(RawBlock format str)
   | format == Format "openxml" = return [ x | Elem x <- parseXML str ]
@@ -1392,23 +1375,6 @@ defaultFootnotes = [ mknode "w:footnote"
                        [ mknode "w:r" [] $
                          [ mknode "w:continuationSeparator" [] ()]]]]
 
-parseXml :: (PandocMonad m) => Archive -> Archive -> String -> m Element
-parseXml refArchive distArchive relpath =
-  case findEntryByPath relpath refArchive `mplus`
-         findEntryByPath relpath distArchive of
-            Nothing -> fail $ relpath ++ " missing in reference docx"
-            Just e  -> case parseXMLDoc . UTF8.toStringLazy . fromEntry $ e of
-                       Nothing -> fail $ relpath ++ " corrupt in reference docx"
-                       Just d  -> return d
-
--- | Scales the image to fit the page
--- sizes are passed in emu
-fitToPage :: (Double, Double) -> Integer -> (Integer, Integer)
-fitToPage (x, y) pageWidth
-  -- Fixes width to the page width and scales the height
-  | x > fromIntegral pageWidth =
-    (pageWidth, floor $ (fromIntegral pageWidth / x) * y)
-  | otherwise = (floor x, floor y)
 
 withDirection :: PandocMonad m => WS m a -> WS m a
 withDirection x = do

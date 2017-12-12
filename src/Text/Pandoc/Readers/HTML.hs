@@ -68,9 +68,11 @@ import Text.Pandoc.CSS (foldOrElse, pickStyleAttrProps)
 import Text.Pandoc.Definition
 import Text.Pandoc.Error
 import Text.Pandoc.Logging
-import Text.Pandoc.Options (Extension (Ext_epub_html_exts, Ext_native_divs, Ext_native_spans, Ext_raw_html),
-                            ReaderOptions (readerExtensions, readerStripComments),
-                            extensionEnabled)
+import Text.Pandoc.Options (
+    Extension (Ext_epub_html_exts, Ext_empty_paragraphs, Ext_native_divs,
+               Ext_native_spans, Ext_raw_html),
+    ReaderOptions (readerExtensions, readerStripComments),
+    extensionEnabled)
 import Text.Pandoc.Parsing hiding ((<|>))
 import Text.Pandoc.Shared (addMetaField, crFilter, escapeURI, extractSpaces,
                            safeRead, underlineSpan)
@@ -575,7 +577,10 @@ pPlain = do
 pPara :: PandocMonad m => TagParser m Blocks
 pPara = do
   contents <- trimInlines <$> pInTags "p" inline
-  return $ B.para contents
+  (do guardDisabled Ext_empty_paragraphs
+      guard (B.isNull contents)
+      return mempty)
+    <|> return (B.para contents)
 
 pFigure :: PandocMonad m => TagParser m Blocks
 pFigure = try $ do
@@ -1150,8 +1155,9 @@ htmlTag f = try $ do
   -- in XML element names
   let isNameChar c = isAlphaNum c || c == ':' || c == '-' || c == '_'
   let isName s = case s of
-                      []     -> False
-                      (c:cs) -> isLetter c && all isNameChar cs
+                      []      -> False
+                      ('?':_) -> True -- processing instruction
+                      (c:cs)  -> isLetter c && all isNameChar cs
 
   let endpos = if ln == 1
                   then setSourceColumn startpos

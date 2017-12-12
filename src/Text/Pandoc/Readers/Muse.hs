@@ -57,7 +57,7 @@ import Text.Pandoc.Logging
 import Text.Pandoc.Options
 import Text.Pandoc.Parsing
 import Text.Pandoc.Readers.HTML (htmlTag)
-import Text.Pandoc.Shared (crFilter)
+import Text.Pandoc.Shared (crFilter, underlineSpan)
 
 -- | Read Muse from an input string and return a Pandoc document.
 readMuse :: PandocMonad m
@@ -136,23 +136,50 @@ commonPrefix (x:xs) (y:ys)
   | x == y    = x : commonPrefix xs ys
   | otherwise = []
 
+atStart :: PandocMonad m => MuseParser m a -> MuseParser m a
+atStart p = do
+  pos <- getPosition
+  st <- getState
+  guard $ stateLastStrPos st /= Just pos
+  p
+
 --
 -- directive parsers
 --
 
-parseDirective :: PandocMonad m => MuseParser m (String, F Inlines)
-parseDirective = do
+-- While not documented, Emacs Muse allows "-" in directive name
+parseDirectiveKey :: PandocMonad m => MuseParser m String
+parseDirectiveKey = do
   char '#'
-  key <- many letter
+  many (letter <|> char '-')
+
+parseEmacsDirective :: PandocMonad m => MuseParser m (String, F Inlines)
+parseEmacsDirective = do
+  key <- parseDirectiveKey
   space
   spaces
   raw <- manyTill anyChar eol
   value <- parseFromString (trimInlinesF . mconcat <$> many inline) raw
   return (key, value)
 
+parseAmuseDirective :: PandocMonad m => MuseParser m (String, F Inlines)
+parseAmuseDirective = do
+  key <- parseDirectiveKey
+  space
+  spaces
+  first <- manyTill anyChar eol
+  rest <- manyTill anyLine endOfDirective
+  many blankline
+  value <- parseFromString (trimInlinesF . mconcat <$> many inline) $ unlines (first : rest)
+  return (key, value)
+  where
+    endOfDirective = lookAhead $ endOfInput <|> try (void blankline) <|> try (void parseDirectiveKey)
+    endOfInput     = try $ skipMany blankline >> skipSpaces >> eof
+
 directive :: PandocMonad m => MuseParser m ()
 directive = do
-  (key, value) <- parseDirective
+  ext <- getOption readerExtensions
+  (key, value) <- if extensionEnabled Ext_amuse ext then parseAmuseDirective else parseEmacsDirective
   updateState $ \st -> st { stateMeta' = B.setMeta key <$> value <*> stateMeta' st }
 
 --
@@ -401,7 +428,7 @@ listStart marker = try $ do
 dropSpacePrefix :: [String] -> [String]
 dropSpacePrefix lns =
   map (drop maxIndent) lns
-  where flns = filter (\s -> not $ all (== ' ') s) lns
+  where flns = filter (not . all (== ' ')) lns
         maxIndent = if null flns then 0 else length $ takeWhile (== ' ') $ foldl1 commonPrefix flns
 
 listItemContents :: PandocMonad m => Int -> MuseParser m (F Blocks)
@@ -577,6 +604,7 @@ inlineList = [ endline
              , strongTag
              , emph
              , emphTag
+             , underlined
              , superscriptTag
              , subscriptTag
              , strikeoutTag
@@ -592,7 +620,7 @@ inlineList = [ endline
              ]
 
 inline :: PandocMonad m => MuseParser m (F Inlines)
-inline = (choice inlineList) <?> "inline"
+inline = choice inlineList <?> "inline"
 
 endline :: PandocMonad m => MuseParser m (F Inlines)
 endline = try $ do
@@ -647,7 +675,7 @@ enclosedInlines :: (PandocMonad m, Show a, Show b)
                 -> MuseParser m b
                 -> MuseParser m (F Inlines)
 enclosedInlines start end = try $
-  trimInlinesF . mconcat <$> (enclosed start end inline <* notFollowedBy (satisfy isLetter))
+  trimInlinesF . mconcat <$> (enclosed (atStart start) end inline <* notFollowedBy (satisfy isLetter))
 
 inlineTag :: PandocMonad m
           => (Inlines -> Inlines)
@@ -665,6 +693,11 @@ strong = fmap B.strong <$> emphasisBetween (string "**")
 
 emph :: PandocMonad m => MuseParser m (F Inlines)
 emph = fmap B.emph <$> emphasisBetween (char '*')
+
+underlined :: PandocMonad m => MuseParser m (F Inlines)
+underlined = do
+  guardDisabled Ext_amuse -- Supported only by Emacs Muse
+  fmap underlineSpan <$> emphasisBetween (char '_')
 
 emphTag :: PandocMonad m => MuseParser m (F Inlines)
 emphTag = inlineTag B.emph "em"
@@ -719,7 +752,10 @@ inlineLiteralTag = do
     rawInline (attrs, content) = B.rawInline (format attrs) content
 
 str :: PandocMonad m => MuseParser m (F Inlines)
-str = return . B.str <$> many1 alphaNum
+str = do
+  result <- many1 alphaNum
+  updateLastStrPos
+  return $ return $ B.str result
 
 symbol :: PandocMonad m => MuseParser m (F Inlines)
 symbol = return . B.str <$> count 1 nonspaceChar

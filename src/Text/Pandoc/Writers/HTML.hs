@@ -41,7 +41,8 @@ module Text.Pandoc.Writers.HTML (
   writeSlidy,
   writeSlideous,
   writeDZSlides,
-  writeRevealJs
+  writeRevealJs,
+  tagWithAttributes
   ) where
 import Control.Monad.State.Strict
 import Data.Char (ord, toLower)
@@ -55,6 +56,7 @@ import qualified Data.Text.Lazy as TL
 import Network.HTTP (urlEncode)
 import Network.URI (URI (..), parseURIReference, unEscapeString)
 import Numeric (showHex)
+import Text.Blaze.Internal (customLeaf, MarkupM(Empty))
 import Text.Blaze.Html hiding (contents)
 import Text.Pandoc.Definition
 import Text.Pandoc.Highlighting (formatHtmlBlock, formatHtmlInline, highlight,
@@ -83,7 +85,7 @@ import System.FilePath (takeBaseName, takeExtension)
 import Text.Blaze.Html.Renderer.Text (renderHtml)
 import qualified Text.Blaze.XHtml1.Transitional as H
 import qualified Text.Blaze.XHtml1.Transitional.Attributes as A
-import Text.Pandoc.Class (PandocMonad, report)
+import Text.Pandoc.Class (PandocMonad, report, runPure)
 import Text.Pandoc.Error
 import Text.Pandoc.Logging
 import Text.TeXMath
@@ -542,6 +544,21 @@ obfuscateChar char =
 obfuscateString :: String -> String
 obfuscateString = concatMap obfuscateChar . fromEntities
 
+-- | Create HTML tag with attributes.
+tagWithAttributes :: WriterOptions
+                  -> Bool -- ^ True for HTML5
+                  -> Bool -- ^ True if self-closing tag
+                  -> Text -- ^ Tag text
+                  -> Attr -- ^ Pandoc style tag attributes
+                  -> Text
+tagWithAttributes opts html5 selfClosing tagname attr =
+  let mktag = (TL.toStrict . renderHtml <$> evalStateT
+               (addAttrs opts attr (customLeaf (textTag tagname) selfClosing))
+               defaultWriterState{ stHtml5 = html5 })
+  in  case runPure mktag of
+           Left _  -> mempty
+           Right t -> t
+
 addAttrs :: PandocMonad m
          => WriterOptions -> Attr -> Html -> StateT WriterState m Html
 addAttrs opts attr h = foldl (!) h <$> attrsToHtml opts attr
@@ -641,6 +658,7 @@ blockToHtml opts (Para [Image attr txt (s,'f':'i':'g':':':tit)]) =
   figure opts attr txt (s,tit)
 blockToHtml opts (Para lst)
   | isEmptyRaw lst = return mempty
+  | null lst && not (isEnabled Ext_empty_paragraphs opts) = return mempty
   | otherwise = do
       contents <- inlineListToHtml opts lst
       return $ H.p contents
@@ -885,8 +903,7 @@ tableItemToHtml opts tag' align' item = do
   let tag'' = if null alignStr
                  then tag'
                  else tag' ! attribs
-  return $ (
-              tag'' contents) >> nl opts
+  return $ tag'' contents >> nl opts
 
 toListItems :: WriterOptions -> [Html] -> [Html]
 toListItems opts items = map (toListItem opts) items ++ [nl opts]
@@ -894,9 +911,13 @@ toListItems opts items = map (toListItem opts) items ++ [nl opts]
 toListItem :: WriterOptions -> Html -> Html
 toListItem opts item = nl opts >> H.li item
 
-blockListToHtml :: PandocMonad m => WriterOptions -> [Block] -> StateT WriterState m Html
+blockListToHtml :: PandocMonad m
+                => WriterOptions -> [Block] -> StateT WriterState m Html
 blockListToHtml opts lst =
-  (mconcat . intersperse (nl opts)) <$> mapM (blockToHtml opts) lst
+  (mconcat . intersperse (nl opts) . filter nonempty)
+    <$> mapM (blockToHtml opts) lst
+  where nonempty (Empty _) = False
+        nonempty _         = True
 
 -- | Convert list of Pandoc inline elements to HTML.
 inlineListToHtml :: PandocMonad m => WriterOptions -> [Inline] -> StateT WriterState m Html

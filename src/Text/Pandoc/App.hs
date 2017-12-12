@@ -86,8 +86,8 @@ import Text.Pandoc.Lua (LuaException (..), runLuaFilter)
 import Text.Pandoc.PDF (makePDF)
 import Text.Pandoc.Process (pipeProcess)
 import Text.Pandoc.SelfContained (makeDataURI, makeSelfContained)
-import Text.Pandoc.Shared (eastAsianLineBreakFilter, headerShift, isURI, ordNub,
-                           safeRead, tabFilter)
+import Text.Pandoc.Shared (eastAsianLineBreakFilter, stripEmptyParagraphs,
+         headerShift, isURI, ordNub, safeRead, tabFilter)
 import qualified Text.Pandoc.UTF8 as UTF8
 import Text.Pandoc.Writers.Math (defaultKaTeXURL, defaultMathJaxURL)
 import Text.Pandoc.XML (toEntities)
@@ -461,14 +461,17 @@ convertWithOpts opts = do
 
     let transforms = (case optBaseHeaderLevel opts of
                           x | x > 1     -> (headerShift (x - 1) :)
-                            | otherwise -> id) $
+                            | otherwise -> id) .
+                     (if optStripEmptyParagraphs opts
+                         then (stripEmptyParagraphs :)
+                         else id) .
                      (if extensionEnabled Ext_east_asian_line_breaks
                             readerExts &&
                          not (extensionEnabled Ext_east_asian_line_breaks
                               writerExts &&
                               writerWrapText writerOptions == WrapPreserve)
                          then (eastAsianLineBreakFilter :)
-                         else id)
+                         else id) $
                      []
 
     let sourceToDoc :: [FilePath] -> PandocIO Pandoc
@@ -622,6 +625,7 @@ data Opt = Opt
     , optLuaFilters            :: [FilePath] -- ^ Lua filters to apply
     , optEmailObfuscation      :: ObfuscationMethod
     , optIdentifierPrefix      :: String
+    , optStripEmptyParagraphs  :: Bool -- ^ Strip empty paragraphs
     , optIndentedCodeClasses   :: [String] -- ^ Default classes for indented code blocks
     , optDataDir               :: Maybe FilePath
     , optCiteMethod            :: CiteMethod -- ^ Method to output cites
@@ -694,6 +698,7 @@ defaultOpts = Opt
     , optLuaFilters            = []
     , optEmailObfuscation      = NoObfuscation
     , optIdentifierPrefix      = ""
+    , optStripEmptyParagraphs  = False
     , optIndentedCodeClasses   = []
     , optDataDir               = Nothing
     , optCiteMethod            = Citeproc
@@ -810,6 +815,7 @@ defaultWriterName x =
     ".tei"      -> "tei"
     ".ms"       -> "ms"
     ".roff"     -> "ms"
+    ".pptx"     -> "pptx"
     ['.',y]     | y `elem` ['1'..'9'] -> "man"
     _           -> "html"
 
@@ -940,7 +946,15 @@ options =
                   "NUMBER")
                  "" -- "Headers base level"
 
-     , Option "" ["indented-code-classes"]
+    , Option "" ["strip-empty-paragraphs"]
+                 (NoArg
+                  (\opt -> do
+                      deprecatedOption "--stripEmptyParagraphs"
+                        "Use +empty_paragraphs extension."
+                      return opt{ optStripEmptyParagraphs = True }))
+                 "" -- "Strip empty paragraphs"
+
+    , Option "" ["indented-code-classes"]
                   (ReqArg
                    (\arg opt -> return opt { optIndentedCodeClasses = words $
                                              map (\c -> if c == ',' then ' ' else c) arg })
@@ -1061,7 +1075,8 @@ options =
                                   (map T.pack
                                    ["text-color"
                                    ,"background-color"
-                                   ,"line-numbers"
+                                   ,"line-number-color"
+                                   ,"line-number-background-color"
                                    ,"bold"
                                    ,"italic"
                                    ,"underline"
@@ -1390,7 +1405,7 @@ options =
                  (ReqArg
                   (\arg opt -> do
                       let oldArgs = optPdfEngineArgs opt
-                      return opt { optPdfEngineArgs = arg : oldArgs })
+                      return opt { optPdfEngineArgs = oldArgs ++ [arg]})
                   "STRING")
                  "" -- "Flags to pass to the PDF-engine, all instances of this option are accumulated and used"
 
@@ -1462,7 +1477,7 @@ options =
     , Option "m" ["latexmathml", "asciimathml"]
                  (OptArg
                   (\arg opt -> do
-                      deprecatedOption "--latexmathml, --asciimathml, -m"
+                      deprecatedOption "--latexmathml, --asciimathml, -m" ""
                       return opt { optHTMLMathMethod = LaTeXMathML arg })
                   "URL")
                  "" -- "Use LaTeXMathML script in html output"
@@ -1470,7 +1485,7 @@ options =
     , Option "" ["mimetex"]
                  (OptArg
                   (\arg opt -> do
-                      deprecatedOption "--mimetex"
+                      deprecatedOption "--mimetex" ""
                       let url' = case arg of
                                       Just u  -> u ++ "?"
                                       Nothing -> "/cgi-bin/mimetex.cgi?"
@@ -1481,7 +1496,7 @@ options =
     , Option "" ["jsmath"]
                  (OptArg
                   (\arg opt -> do
-                      deprecatedOption "--jsmath"
+                      deprecatedOption "--jsmath" ""
                       return opt { optHTMLMathMethod = JsMath arg})
                   "URL")
                  "" -- "Use jsMath for HTML math"
@@ -1489,7 +1504,7 @@ options =
     , Option "" ["gladtex"]
                  (NoArg
                   (\opt -> do
-                      deprecatedOption "--gladtex"
+                      deprecatedOption "--gladtex" ""
                       return opt { optHTMLMathMethod = GladTeX }))
                  "" -- "Use gladtex for HTML math"
 
@@ -1689,9 +1704,9 @@ splitField s =
 baseWriterName :: String -> String
 baseWriterName = takeWhile (\c -> c /= '+' && c /= '-')
 
-deprecatedOption :: String -> IO ()
-deprecatedOption o =
-  runIO (report $ Deprecated o "") >>=
+deprecatedOption :: String -> String -> IO ()
+deprecatedOption o msg =
+  runIO (report $ Deprecated o msg) >>=
     \r -> case r of
        Right () -> return ()
        Left e   -> E.throwIO e

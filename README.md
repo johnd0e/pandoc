@@ -29,9 +29,9 @@ Extra], [GitHub-Flavored Markdown], [MultiMarkdown],
 markup], [DokuWiki markup], [ZimWiki markup], [Haddock markup],
 [EPUB] \(v2 or v3\), [FictionBook2], [Textile], [groff man],
 [groff ms], [Emacs Org mode], [AsciiDoc], [InDesign ICML], [TEI
-Simple], [Muse] and [Slidy], [Slideous], [DZSlides], [reveal.js]
-or [S5] HTML slide shows. It can also produce [PDF] output on
-systems where LaTeX, ConTeXt, `pdfroff`, `wkhtmltopdf`,
+Simple], [Muse], [PowerPoint] slide shows and [Slidy], [Slideous],
+[DZSlides], [reveal.js] or [S5] HTML slide shows. It can also produce
+[PDF] output on systems where LaTeX, ConTeXt, `pdfroff`, `wkhtmltopdf`,
 `prince`, or `weasyprint` is installed.
 
 Pandoc's enhanced version of Markdown includes syntax for [footnotes],
@@ -91,6 +91,7 @@ Markdown can be expected to be lossy.
 [TWiki markup]: http://twiki.org/cgi-bin/view/TWiki/TextFormattingRules
 [Haddock markup]: https://www.haskell.org/haddock/doc/html/ch03s08.html
 [groff man]: http://man7.org/linux/man-pages/man7/groff_man.7.html
+[groff ms]: http://man7.org/linux/man-pages/man7/groff_ms.7.html
 [Haskell]: https://www.haskell.org
 [GNU Texinfo]: http://www.gnu.org/software/texinfo/
 [Emacs Org mode]: http://orgmode.org
@@ -103,6 +104,7 @@ Markdown can be expected to be lossy.
 [InDesign ICML]: https://www.adobe.com/content/dam/Adobe/en/devnet/indesign/cs55-docs/IDML/idml-specification.pdf
 [TEI Simple]: https://github.com/TEIC/TEI-Simple
 [Muse]: https://amusewiki.org/library/manual
+[PowerPoint]: https://en.wikipedia.org/wiki/Microsoft_PowerPoint
 [Vimwiki]: https://vimwiki.github.io
 
 

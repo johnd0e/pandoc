@@ -10,6 +10,7 @@ import Tests.Helpers
 import Text.Pandoc
 import Text.Pandoc.Arbitrary ()
 import Text.Pandoc.Builder
+import Text.Pandoc.Shared (underlineSpan)
 -- import Text.Pandoc.Walk (walk)
 
 amuse :: Text -> Pandoc
@@ -69,6 +70,10 @@ tests =
         "Foo *bar*x baz" =?>
         para "Foo *bar*x baz"
 
+      , "Letter before opening *" =:
+        "Foo x*bar* baz" =?>
+        para "Foo x*bar* baz"
+
       , "Emphasis tag" =:
         "<em>Foo bar</em>" =?>
         para (emph . spcSep $ ["Foo", "bar"])
@@ -82,6 +87,9 @@ tests =
       , "Strong Emphasis" =:
           "***strength***" =?>
           para (strong . emph $ "strength")
+
+      , test emacsMuse "Underline"
+        ("_Underline_" =?> para (underlineSpan "Underline"))
 
       , "Superscript tag" =: "<sup>Superscript</sup>" =?> para (superscript "Superscript")
 
@@ -108,7 +116,7 @@ tests =
       , "Linebreak" =: "Line <br>  break" =?> para ("Line" <> linebreak <> "break")
 
       , test emacsMuse "Non-breaking space"
-        ("Foo~~bar" =?> para ("Foo\160bar"))
+        ("Foo~~bar" =?> para "Foo\160bar")
 
       , testGroup "Code markup"
         [ "Code" =: "=foo(bar)=" =?> para (code "foo(bar)")
@@ -445,6 +453,19 @@ tests =
                     , "</quote>"
                     ] =?>
           blockQuote (para "* Hi")
+        ]
+      , testGroup "Directives"
+        [ "Title" =:
+          "#title Document title" =?>
+          let titleInline = toList "Document title"
+              meta = setMeta "title" (MetaInlines titleInline) nullMeta
+          in Pandoc meta mempty
+        -- Emacs Muse documentation says that "You can use any combination
+        -- of uppercase and lowercase letters for directives",
+        -- but also allows '-', which is not documented, but used for disable-tables.
+        , test emacsMuse "Disable tables"
+          ("#disable-tables t" =?>
+          Pandoc (setMeta "disable-tables" (MetaInlines $ toList "t") nullMeta) mempty)
         ]
       , testGroup "Anchors"
         [ "Anchor" =:
@@ -931,12 +952,5 @@ tests =
                                                          , para "Second"
                                                          , para "Third"
                                                          ])
-      ]
-  , testGroup "Meta"
-      [ "Title" =:
-        "#title Document title" =?>
-        let titleInline = toList $ "Document title"
-            meta = setMeta "title" (MetaInlines titleInline) $ nullMeta
-        in Pandoc meta mempty
       ]
   ]

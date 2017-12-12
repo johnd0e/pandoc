@@ -46,7 +46,7 @@ import Text.Pandoc.Options
 import Text.Pandoc.Shared (isTightList, linesToPara, substitute)
 import Text.Pandoc.Templates (renderTemplate')
 import Text.Pandoc.Walk (query, walk, walkM)
-import Text.Pandoc.Writers.HTML (writeHtml5String)
+import Text.Pandoc.Writers.HTML (writeHtml5String, tagWithAttributes)
 import Text.Pandoc.Writers.Shared
 
 -- | Convert Pandoc to CommonMark.
@@ -111,9 +111,12 @@ blockToNodes opts (Para xs) ns =
 blockToNodes opts (LineBlock lns) ns = blockToNodes opts (linesToPara lns) ns
 blockToNodes _ (CodeBlock (_,classes,_) xs) ns = return
   (node (CODE_BLOCK (T.pack (unwords classes)) (T.pack xs)) [] : ns)
-blockToNodes _ (RawBlock fmt xs) ns
-  | fmt == Format "html" = return (node (HTML_BLOCK (T.pack xs)) [] : ns)
-  | otherwise = return (node (CUSTOM_BLOCK (T.pack xs) T.empty) [] : ns)
+blockToNodes opts (RawBlock fmt xs) ns
+  | fmt == Format "html" && isEnabled Ext_raw_html opts
+              = return (node (HTML_BLOCK (T.pack xs)) [] : ns)
+  | fmt == Format "latex" || fmt == Format "tex" && isEnabled Ext_raw_tex opts
+              = return (node (CUSTOM_BLOCK (T.pack xs) T.empty) [] : ns)
+  | otherwise = return ns
 blockToNodes opts (BlockQuote bs) ns = do
   nodes <- blocksToNodes opts bs
   return (node BLOCK_QUOTE nodes : ns)
@@ -137,9 +140,13 @@ blockToNodes opts (OrderedList (start, _sty, delim) items) ns = do
 blockToNodes _ HorizontalRule ns = return (node THEMATIC_BREAK [] : ns)
 blockToNodes opts (Header lev _ ils) ns =
   return (node (HEADING lev) (inlinesToNodes opts ils) : ns)
-blockToNodes opts (Div _ bs) ns = do
+blockToNodes opts (Div attr bs) ns = do
   nodes <- blocksToNodes opts bs
-  return (nodes ++ ns)
+  let op = tagWithAttributes opts True False "div" attr
+  if isEnabled Ext_raw_html opts
+     then return (node (HTML_BLOCK op) [] : nodes ++
+                  [node (HTML_BLOCK (T.pack "</div>")) []] ++ ns)
+     else return (nodes ++ ns)
 blockToNodes opts (DefinitionList items) ns =
   blockToNodes opts (BulletList items') ns
   where items' = map dlToBullet items
@@ -263,9 +270,12 @@ inlineToNodes opts (Image alt ils (url,'f':'i':'g':':':tit)) =
   inlineToNodes opts (Image alt ils (url,tit))
 inlineToNodes opts (Image _ ils (url,tit)) =
   (node (IMAGE (T.pack url) (T.pack tit)) (inlinesToNodes opts ils) :)
-inlineToNodes _ (RawInline fmt xs)
-  | fmt == Format "html" = (node (HTML_INLINE (T.pack xs)) [] :)
-  | otherwise = (node (CUSTOM_INLINE (T.pack xs) T.empty) [] :)
+inlineToNodes opts (RawInline fmt xs)
+  | fmt == Format "html" && isEnabled Ext_raw_html opts
+              = (node (HTML_INLINE (T.pack xs)) [] :)
+  | (fmt == Format "latex" || fmt == Format "tex") && isEnabled Ext_raw_tex opts
+              = (node (CUSTOM_INLINE (T.pack xs) T.empty) [] :)
+  | otherwise = id
 inlineToNodes opts (Quoted qt ils) =
   ((node (TEXT start) [] :
    inlinesToNodes opts ils ++ [node (TEXT end) []]) ++)
@@ -292,7 +302,13 @@ inlineToNodes opts (Math mt str) =
               (node (HTML_INLINE (T.pack ("\\(" ++ str ++ "\\)"))) [] :)
             DisplayMath ->
               (node (HTML_INLINE (T.pack ("\\[" ++ str ++ "\\]"))) [] :)
-inlineToNodes opts (Span _ ils) = (inlinesToNodes opts ils ++)
+inlineToNodes opts (Span attr ils) =
+  let nodes = inlinesToNodes opts ils
+      op = tagWithAttributes opts True False "span" attr
+  in  if isEnabled Ext_raw_html opts
+         then ((node (HTML_INLINE op) [] : nodes ++
+                [node (HTML_INLINE (T.pack "</span>")) []]) ++)
+         else (nodes ++)
 inlineToNodes opts (Cite _ ils) = (inlinesToNodes opts ils ++)
 inlineToNodes _ (Note _) = id -- should not occur
 -- we remove Note elements in preprocessing
