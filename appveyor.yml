@@ -52,9 +52,9 @@ install:
 # before_test:
 
 test_script:
+  - copy c:\pandoc\specs C:\Users\appveyor\AppData\Local\Programs\stack\i386-windows\ghc-8.2.2\mingw\lib\gcc\i686-w64-mingw32\6.2.0\
   # The ugly echo "" hack is to avoid complaints about 0 being an invalid file
   # descriptor
-#      copy c:\pandoc\specs C:\Users\appveyor\AppData\Local\Programs\stack\i386-windows\ghc-8.2.2\mingw\lib\gcc\i686-w64-mingw32\6.2.0\
   - |
       %STACK% setup>nul
       %STACK% path
