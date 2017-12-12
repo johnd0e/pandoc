@@ -58,8 +58,8 @@ test_script:
       %STACK% setup>nul
       %STACK% path
       echo "" | %STACK% clean
+      copy c:\pandoc\specs C:\Users\appveyor\AppData\Local\Programs\stack\i386-windows\ghc-8.2.2\mingw\lib\gcc\i686-w64-mingw32\6.2.0\
       echo "" | %STACK% %STACK_BUILD_OPTS% install pandoc pandoc-citeproc %STACK_FLAGS%
-  - copy c:\pandoc\specs C:\Users\appveyor\AppData\Local\Programs\stack\i386-windows\ghc-8.2.2\mingw\lib\gcc\i686-w64-mingw32\6.2.0\
 
 after_test:
     # .\ in the stack commandline seems to be .\windows\ (where the stack-appveyor.yaml is)
