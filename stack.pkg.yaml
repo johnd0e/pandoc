@@ -31,5 +31,5 @@ resolver: nightly-2017-12-01
 #compiler: ghc-7.10.3
 
 ghc-options:
-  "$everything": -v3
+  "*": -v3
   
