@@ -29,6 +29,7 @@ extra-deps:
 resolver: nightly-2017-12-01
 #resolver: lts-9.14
 #compiler: ghc-7.10.3
-ghc-options
+
+ghc-options:
   "$everything": -v3
   
