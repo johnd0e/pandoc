@@ -31,7 +31,6 @@ Conversion of Muse text to 'Pandoc' document.
 {-
 TODO:
 - Page breaks (five "*")
-- Headings with anchors (make it round trip with Muse writer)
 - Org tables
 - table.el tables
 - Images with attributes (floating and width)
@@ -241,7 +240,8 @@ header = try $ do
   guard $ level <= 5
   spaceChar
   content <- trimInlinesF . mconcat <$> manyTill inline eol
-  attr <- registerHeader ("", [], []) (runF content defaultParserState)
+  anchorId <- option "" parseAnchor
+  attr <- registerHeader (anchorId, [], []) (runF content defaultParserState)
   return $ B.headerWith attr level <$> content
 
 example :: PandocMonad m => MuseParser m (F Blocks)
@@ -336,7 +336,9 @@ para = do
 noteMarker :: PandocMonad m => MuseParser m String
 noteMarker = try $ do
   char '['
-  many1Till digit $ char ']'
+  first <- oneOf "123456789"
+  rest <- manyTill digit (char ']')
+  return $ first:rest
 
 -- Amusewiki version of note
 -- Parsing is similar to list item, except that note marker is used instead of list marker
@@ -627,14 +629,18 @@ endline = try $ do
   notFollowedBy blankline
   returnF B.softbreak
 
-anchor :: PandocMonad m => MuseParser m (F Inlines)
-anchor = try $ do
+parseAnchor :: PandocMonad m => MuseParser m String
+parseAnchor = try $ do
   getPosition >>= \pos -> guard (sourceColumn pos == 1)
   char '#'
   first <- letter
   rest <- many (letter <|> digit)
   skipMany spaceChar <|> void newline
-  let anchorId = first:rest
+  return $ first:rest
+
+anchor :: PandocMonad m => MuseParser m (F Inlines)
+anchor = try $ do
+  anchorId <- parseAnchor
   return $ return $ B.spanWith (anchorId, [], []) mempty
 
 footnote :: PandocMonad m => MuseParser m (F Inlines)

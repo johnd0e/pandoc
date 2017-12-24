@@ -170,6 +170,28 @@ imageMimeType src kvs =
                   ((drop 1 . dropWhile (/='/')) <$> mbMT)
   in (maintype, subtype)
 
+languageFor :: [String] -> String
+languageFor classes =
+  case langs of
+     (l:_) -> escapeStringForXML l
+     []    -> ""
+    where isLang l    = map toLower l `elem` map (map toLower) languages
+          langsFrom s = if isLang s
+                           then [s]
+                           else languagesByExtension . map toLower $ s
+          langs       = concatMap langsFrom classes
+
+codeAttr :: Attr -> (String, [(String, String)])
+codeAttr (ident,classes,kvs) = (lang, attr)
+    where
+       attr = [("id",ident) | not (null ident)] ++
+              [("language",lang) | not (null lang)] ++
+              [(k,v) | (k,v) <- kvs, k `elem` ["code-type",
+                "code-version", "executable",
+                "language-version", "orientation",
+                    "platforms", "position", "specific-use"]]
+       lang  = languageFor classes
+
 -- | Convert a Pandoc block element to JATS.
 blockToJATS :: PandocMonad m => WriterOptions -> Block -> JATS m Doc
 blockToJATS _ Null = return empty
@@ -233,23 +255,10 @@ blockToJATS opts (LineBlock lns) =
   blockToJATS opts $ linesToPara lns
 blockToJATS opts (BlockQuote blocks) =
   inTagsIndented "disp-quote" <$> blocksToJATS opts blocks
-blockToJATS _ (CodeBlock (ident,classes,kvs) str) = return $
+blockToJATS _ (CodeBlock a str) = return $
   inTags False tag attr (flush (text (escapeStringForXML str)))
-    where attr  = [("id",ident) | not (null ident)] ++
-                  [("language",lang) | not (null lang)] ++
-                  [(k,v) | (k,v) <- kvs, k `elem` ["code-type",
-                    "code-version", "executable",
-                    "language-version", "orientation",
-                    "platforms", "position", "specific-use"]]
-          tag   = if null lang then "preformat" else "code"
-          lang  = case langs of
-                     (l:_) -> escapeStringForXML l
-                     []    -> ""
-          isLang l    = map toLower l `elem` map (map toLower) languages
-          langsFrom s = if isLang s
-                           then [s]
-                           else languagesByExtension . map toLower $ s
-          langs       = concatMap langsFrom classes
+    where (lang, attr) = codeAttr a
+          tag          = if null lang then "preformat" else "code"
 blockToJATS _ (BulletList []) = return empty
 blockToJATS opts (BulletList lst) =
   inTags True "list" [("list-type", "bullet")] <$>
@@ -316,6 +325,9 @@ tableItemToJATS :: PandocMonad m
                    -> Bool
                    -> [Block]
                    -> JATS m Doc
+tableItemToJATS opts isHeader [Plain item] =
+  inTags True (if isHeader then "th" else "td") [] <$>
+    inlinesToJATS opts item
 tableItemToJATS opts isHeader item =
   (inTags True (if isHeader then "th" else "td") [] . vcat) <$>
     mapM (blockToJATS opts) item
@@ -346,8 +358,10 @@ inlineToJATS opts (Quoted SingleQuote lst) = do
 inlineToJATS opts (Quoted DoubleQuote lst) = do
   contents <- inlinesToJATS opts lst
   return $ char '“' <> contents <> char '”'
-inlineToJATS _ (Code _ str) =
-  return $ inTagsSimple "monospace" $ text (escapeStringForXML str)
+inlineToJATS _ (Code a str) =
+  return $ inTags False tag attr $ text (escapeStringForXML str)
+    where (lang, attr) = codeAttr a
+          tag          = if null lang then "monospace" else "code"
 inlineToJATS _ il@(RawInline f x)
   | f == "jats" = return $ text x
   | otherwise   = do
@@ -405,8 +419,11 @@ inlineToJATS opts (Link (ident,_,kvs) txt ('#':src, _)) = do
              [("alt", stringify txt) | not (null txt)] ++
              [("rid", src)] ++
              [(k,v) | (k,v) <- kvs, k `elem` ["ref-type", "specific-use"]]
-  contents <- inlinesToJATS opts txt
-  return $ inTags False "xref" attr contents
+  if null txt
+     then return $ selfClosingTag "xref" attr
+     else do
+        contents <- inlinesToJATS opts txt
+        return $ inTags False "xref" attr contents
 inlineToJATS opts (Link (ident,_,kvs) txt (src, tit)) = do
   let attr = [("id", ident) | not (null ident)] ++
              [("ext-link-type", "uri"),

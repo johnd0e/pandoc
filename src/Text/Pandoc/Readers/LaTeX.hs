@@ -237,19 +237,21 @@ withVerbatimMode parser = do
   return result
 
 rawLaTeXParser :: (PandocMonad m, HasMacros s, HasReaderOptions s)
-               => LP m a -> ParserT String s m String
+               => LP m a -> ParserT String s m (a, String)
 rawLaTeXParser parser = do
   inp <- getInput
   let toks = tokenize "source" $ T.pack inp
   pstate <- getState
-  let lstate = def{ sOptions = extractReaderOptions pstate }
-  res <- lift $ runParserT ((,) <$> try (snd <$> withRaw parser) <*> getState)
-            lstate "source" toks
+  let lstate = def{ sOptions = extractReaderOptions pstate
+                  , sMacros = extractMacros pstate }
+  let rawparser = (,) <$> withRaw parser <*> getState
+  res <- lift $ runParserT rawparser lstate "chunk" toks
   case res of
        Left _    -> mzero
-       Right (raw, st) -> do
+       Right ((val, raw), st) -> do
          updateState (updateMacros (sMacros st <>))
-         takeP (T.length (untokenize raw))
+         rawstring <- takeP (T.length (untokenize raw))
+         return (val, rawstring)
 
 applyMacros :: (PandocMonad m, HasMacros s, HasReaderOptions s)
             => String -> ParserT String s m String
@@ -268,33 +270,23 @@ rawLaTeXBlock :: (PandocMonad m, HasMacros s, HasReaderOptions s)
               => ParserT String s m String
 rawLaTeXBlock = do
   lookAhead (try (char '\\' >> letter))
-  rawLaTeXParser (environment <|> macroDef <|> blockCommand)
+  -- we don't want to apply newly defined latex macros to their own
+  -- definitions:
+  (do (_, raw) <- rawLaTeXParser macroDef
+      (guardDisabled Ext_latex_macros >> return raw) <|> return "")
+  <|> (do (_, raw) <- rawLaTeXParser (environment <|> blockCommand)
+          applyMacros raw)
 
 rawLaTeXInline :: (PandocMonad m, HasMacros s, HasReaderOptions s)
                => ParserT String s m String
 rawLaTeXInline = do
   lookAhead (try (char '\\' >> letter) <|> char '$')
-  rawLaTeXParser (inlineEnvironment <|> inlineCommand')
+  rawLaTeXParser (inlineEnvironment <|> inlineCommand') >>= applyMacros . snd
 
 inlineCommand :: PandocMonad m => ParserT String ParserState m Inlines
 inlineCommand = do
   lookAhead (try (char '\\' >> letter) <|> char '$')
-  inp <- getInput
-  let toks = tokenize "chunk" $ T.pack inp
-  let rawinline = do
-         (il, raw) <- try $ withRaw (inlineEnvironment <|> inlineCommand')
-         st <- getState
-         return (il, raw, st)
-  pstate <- getState
-  let lstate = def{ sOptions = extractReaderOptions pstate
-                  , sMacros  = extractMacros pstate }
-  res <- runParserT rawinline lstate "source" toks
-  case res of
-       Left _ -> mzero
-       Right (il, raw, s) -> do
-         updateState $ updateMacros (const $ sMacros s)
-         takeP (T.length (untokenize raw))
-         return il
+  fst <$> rawLaTeXParser (inlineEnvironment <|> inlineCommand')
 
 tokenize :: SourceName -> Text -> [Tok]
 tokenize sourcename = totoks (initialPos sourcename)
@@ -376,8 +368,9 @@ totoks pos t =
                          | d < '\128' ->
                                   Tok pos Esc1 (T.pack ['^','^',d])
                                   : totoks (incSourceColumn pos 3) rest''
-                       _ -> [Tok pos Symbol ("^"),
-                             Tok (incSourceColumn pos 1) Symbol ("^")]
+                       _ -> Tok pos Symbol ("^") :
+                            Tok (incSourceColumn pos 1) Symbol ("^") :
+                            totoks (incSourceColumn pos 2) rest'
                 _ -> Tok pos Symbol ("^")
                      : totoks (incSourceColumn pos 1) rest
          | otherwise ->

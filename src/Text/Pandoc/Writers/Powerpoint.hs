@@ -105,6 +105,7 @@ data WriterEnv = WriterEnv { envMetadata :: Meta
                            , envPresentationSize :: PresentationSize
                            , envSlideHasHeader :: Bool
                            , envInList :: Bool
+                           , envInNoteSlide :: Bool
                            }
                  deriving (Show)
 
@@ -120,6 +121,7 @@ instance Default WriterEnv where
                   , envPresentationSize = def
                   , envSlideHasHeader = False
                   , envInList = False
+                  , envInNoteSlide = False
                   }
 
 data MediaInfo = MediaInfo { mInfoFilePath :: FilePath
@@ -139,6 +141,7 @@ data WriterState = WriterState { stCurSlideId :: Int
                                -- (FP, Local ID, Global ID, Maybe Mime)
                                , stMediaIds :: M.Map Int [MediaInfo]
                                , stMediaGlobalIds :: M.Map FilePath Int
+                               , stNoteIds :: M.Map Int [Block]
                                } deriving (Show, Eq)
 
 instance Default WriterState where
@@ -147,6 +150,7 @@ instance Default WriterState where
                     , stLinkIds = mempty
                     , stMediaIds = mempty
                     , stMediaGlobalIds = mempty
+                    , stNoteIds = mempty
                     }
 
 type P m = ReaderT WriterEnv (StateT WriterState m)
@@ -300,6 +304,7 @@ data RunProps = RunProps { rPropBold :: Bool
                          , rLink :: Maybe (URL, String)
                          , rPropCode :: Bool
                          , rPropBlockQuote :: Bool
+                         , rPropForceSize :: Maybe Pixels
                          } deriving (Show, Eq)
 
 instance Default RunProps where
@@ -311,6 +316,7 @@ instance Default RunProps where
                  , rLink = Nothing
                  , rPropCode = False
                  , rPropBlockQuote = False
+                 , rPropForceSize = Nothing
                  }
 
 --------------------------------------------------
@@ -351,9 +357,23 @@ inlineToParElems (Code _ str) = do
     inlineToParElems $ Str str
 inlineToParElems (Math mathtype str) =
   return [MathElem mathtype (TeXString str)]
+inlineToParElems (Note blks) = do
+  notes <- gets stNoteIds
+  let maxNoteId = case M.keys notes of
+        [] -> 0
+        lst -> maximum lst
+      curNoteId = maxNoteId + 1
+  modify $ \st -> st { stNoteIds = M.insert curNoteId blks notes }
+  inlineToParElems $ Superscript [Str $ show curNoteId]
 inlineToParElems (Span _ ils) = concatMapM inlineToParElems ils
 inlineToParElems (RawInline _ _) = return []
 inlineToParElems _ = return []
+
+isListType :: Block -> Bool
+isListType (OrderedList _ _) = True
+isListType (BulletList _) = True
+isListType (DefinitionList _) = True
+isListType _ = False
 
 blockToParagraphs :: PandocMonad m => Block -> P m [Paragraph]
 blockToParagraphs (Plain ils) = do
@@ -372,10 +392,16 @@ blockToParagraphs (LineBlock ilsList) = do
 blockToParagraphs (CodeBlock attr str) =
   local (\r -> r{envParaProps = def{pPropMarginLeft = Just 100}}) $
   blockToParagraphs $ Para [Code attr str]
--- TODO: work out the format
+-- We can't yet do incremental lists, but we should render a
+-- (BlockQuote List) as a list to maintain compatibility with other
+-- formats.
+blockToParagraphs (BlockQuote (blk : blks)) | isListType blk = do
+  ps  <- blockToParagraphs blk
+  ps' <- blockToParagraphs $ BlockQuote blks
+  return $ ps ++ ps'
 blockToParagraphs (BlockQuote blks) =
   local (\r -> r{ envParaProps = (envParaProps r){pPropMarginLeft = Just 100}
-                , envRunProps = (envRunProps r){rPropBlockQuote = True}})$
+                , envRunProps = (envRunProps r){rPropForceSize = Just blockQuoteSize}})$
   concatMapM blockToParagraphs blks
 -- TODO: work out the format
 blockToParagraphs (RawBlock _ _) = return []
@@ -411,6 +437,15 @@ blockToParagraphs (OrderedList listAttr blksLst) = do
                                            , pPropMarginLeft = Nothing
                                            }}) $
     concatMapM multiParBullet blksLst
+blockToParagraphs (DefinitionList entries) = do
+  let go :: PandocMonad m => ([Inline], [[Block]]) -> P m [Paragraph]
+      go (ils, blksLst) = do
+        term <-blockToParagraphs $ Para [Strong ils]
+        -- For now, we'll treat each definition term as a
+        -- blockquote. We can extend this further later.
+        definition <- concatMapM (blockToParagraphs . BlockQuote) blksLst
+        return $ term ++ definition
+  concatMapM go entries
 blockToParagraphs (Div _ blks)  = concatMapM blockToParagraphs blks
 -- TODO
 blockToParagraphs blk = do
@@ -527,12 +562,18 @@ blocksToSlide' lvl ((Header n _ ils) : blks)
       return $ TitleSlide {titleSlideHeader = hdr}
   | n == lvl = do
       hdr <- inlinesToParElems ils
-      shapes <- blocksToShapes blks
+      inNoteSlide <- asks envInNoteSlide
+      shapes <- if inNoteSlide
+                then forceFontSize noteSize $ blocksToShapes blks
+                else blocksToShapes blks
       return $ ContentSlide { contentSlideHeader = hdr
                             , contentSlideContent = shapes
                             }
 blocksToSlide' _ (blk : blks) = do
-      shapes <- blocksToShapes (blk : blks)
+      inNoteSlide <- asks envInNoteSlide
+      shapes <- if inNoteSlide
+                then forceFontSize noteSize $ blocksToShapes (blk : blks)
+                else blocksToShapes (blk : blks)
       return $ ContentSlide { contentSlideHeader = []
                             , contentSlideContent = shapes
                             }
@@ -544,6 +585,38 @@ blocksToSlide :: PandocMonad m => [Block] -> P m Slide
 blocksToSlide blks = do
   slideLevel <- asks envSlideLevel
   blocksToSlide' slideLevel blks
+
+makeNoteEntry :: Int -> [Block] -> [Block]
+makeNoteEntry n blks =
+  let enum = Str (show n ++ ".")
+  in
+    case blks of
+      (Para ils : blks') -> (Para $ enum : Space : ils) : blks'
+      _ -> (Para [enum]) : blks
+
+forceFontSize :: PandocMonad m => Pixels -> P m a -> P m a
+forceFontSize px x = do
+  rpr <- asks envRunProps
+  local (\r -> r {envRunProps = rpr{rPropForceSize = Just px}}) x
+
+-- Right now, there's no logic for making more than one slide, but I
+-- want to leave the option open to make multiple slides if we figure
+-- out how to guess at how much space the text of the notes will take
+-- up (or if we allow a way for it to be manually controlled). Plus a
+-- list will make it easier to put together in the final
+-- `blocksToPresentation` function (since we can just add an empty
+-- list without checking the state).
+makeNotesSlides :: PandocMonad m => P m [Slide]
+makeNotesSlides = local (\env -> env{envInNoteSlide=True}) $ do
+  noteIds <- gets stNoteIds
+  if M.null noteIds
+    then return []
+    else do let hdr = Header 2 nullAttr [Str "Notes"]
+            blks <- return $
+                    concatMap (\(n, bs) -> makeNoteEntry n bs) $
+                    M.toList noteIds
+            sld <- blocksToSlide $ hdr : blks
+            return [sld]
 
 getMetaSlide :: PandocMonad m => P m (Maybe Slide)
 getMetaSlide  = do
@@ -570,11 +643,13 @@ blocksToPresentation :: PandocMonad m => [Block] -> P m Presentation
 blocksToPresentation blks = do
   blksLst <- splitBlocks blks
   slides <- mapM blocksToSlide blksLst
+  noteSlides <- makeNotesSlides
+  let slides' = slides ++ noteSlides
   metadataslide <- getMetaSlide
   presSize <- asks envPresentationSize
   return $ case metadataslide of
-             Just metadataslide' -> Presentation presSize $ metadataslide' : slides
-             Nothing            -> Presentation presSize slides
+             Just metadataslide' -> Presentation presSize $ metadataslide' : slides'
+             Nothing            -> Presentation presSize slides'
 
 --------------------------------------------------------------------
 
@@ -1045,13 +1120,18 @@ makePicElement mInfo attr = do
 blockQuoteSize :: Pixels
 blockQuoteSize = 20
 
+noteSize :: Pixels
+noteSize = 18
+
 paraElemToElement :: PandocMonad m => ParaElem -> P m Element
 paraElemToElement Break = return $ mknode "a:br" [] ()
 paraElemToElement (Run rpr s) = do
   let attrs =
         if rPropCode rpr
         then []
-        else (if rPropBlockQuote rpr then [("sz", (show $ blockQuoteSize * 100))] else []) ++
+        else (case rPropForceSize rpr of
+                Just n -> [("sz", (show $ n * 100))]
+                Nothing -> []) ++
              (if rPropBold rpr then [("b", "1")] else []) ++
              (if rPropItalics rpr then [("i", "1")] else []) ++
              (case rStrikethrough rpr of

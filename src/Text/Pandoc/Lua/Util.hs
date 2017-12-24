@@ -32,9 +32,12 @@ module Text.Pandoc.Lua.Util
   ( adjustIndexBy
   , getTable
   , addValue
+  , addFunction
   , getRawInt
   , setRawInt
   , addRawInt
+  , raiseError
+  , OrNil (..)
   , PushViaCall
   , pushViaCall
   , pushViaConstructor
@@ -44,8 +47,8 @@ module Text.Pandoc.Lua.Util
 
 import Control.Monad (when)
 import Data.ByteString.Char8 (unpack)
-import Foreign.Lua (FromLuaStack (..), Lua, NumArgs, StackIndex,
-                    ToLuaStack (..), getglobal')
+import Foreign.Lua (FromLuaStack (..), NumResults, Lua, NumArgs, StackIndex,
+                    ToLuaStack (..), ToHaskellFunction, getglobal')
 import Foreign.Lua.Api (Status, call, pop, rawget, rawgeti, rawset, rawseti)
 import Text.Pandoc.Class (readDataFile, runIOorExplode, setUserDataDir)
 
@@ -64,21 +67,28 @@ getTable :: (ToLuaStack a, FromLuaStack b) => StackIndex -> a -> Lua b
 getTable idx key = do
   push key
   rawget (idx `adjustIndexBy` 1)
-  peek (-1) <* pop 1
+  popValue
 
--- | Add a key-value pair to the table at the top of the stack
+-- | Add a key-value pair to the table at the top of the stack.
 addValue :: (ToLuaStack a, ToLuaStack b) => a -> b -> Lua ()
 addValue key value = do
   push key
   push value
   rawset (-3)
 
+-- | Add a function to the table at the top of the stack, using the given name.
+addFunction :: ToHaskellFunction a => String -> a -> Lua ()
+addFunction name fn = do
+  Lua.push name
+  Lua.pushHaskellFunction fn
+  Lua.wrapHaskellFunction
+  Lua.rawset (-3)
+
 -- | Get value behind key from table at given index.
 getRawInt :: FromLuaStack a => StackIndex -> Int -> Lua a
-getRawInt idx key =
+getRawInt idx key = do
   rawgeti idx key
-  *> peek (-1)
-  <* pop 1
+  popValue
 
 -- | Set numeric key/value in table at the given index
 setRawInt :: ToLuaStack a => StackIndex -> Int -> a -> Lua ()
@@ -89,6 +99,35 @@ setRawInt idx key value = do
 -- | Set numeric key/value in table at the top of the stack.
 addRawInt :: ToLuaStack a => Int -> a -> Lua ()
 addRawInt = setRawInt (-1)
+
+raiseError :: ToLuaStack a => a -> Lua NumResults
+raiseError e = do
+  Lua.push e
+  fromIntegral <$> Lua.lerror
+
+-- | Get, then pop the value at the top of the stack.
+popValue :: FromLuaStack a => Lua a
+popValue = do
+  resOrError <- Lua.peekEither (-1)
+  pop 1
+  case resOrError of
+    Left err -> Lua.throwLuaError err
+    Right x -> return x
+
+-- | Newtype wrapper intended to be used for optional Lua values. Nesting this
+-- type is strongly discouraged and will likely lead to a wrong result.
+newtype OrNil a = OrNil { toMaybe :: Maybe a }
+
+instance FromLuaStack a => FromLuaStack (OrNil a) where
+  peek idx = do
+    noValue <- Lua.isnoneornil idx
+    if noValue
+      then return (OrNil Nothing)
+      else OrNil . Just <$> Lua.peek idx
+
+instance ToLuaStack a => ToLuaStack (OrNil a) where
+  push (OrNil Nothing)  = Lua.pushnil
+  push (OrNil (Just x)) = Lua.push x
 
 -- | Helper class for pushing a single value to the stack via a lua function.
 -- See @pushViaCall@.
