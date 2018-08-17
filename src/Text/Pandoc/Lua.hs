@@ -1,5 +1,6 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-
-Copyright © 2017 Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
+Copyright © 2017–2018 Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -17,7 +18,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 -}
 {- |
    Module      : Text.Pandoc.Lua
-   Copyright   : Copyright © 2017 Albert Krewinkel
+   Copyright   : Copyright © 2017–2018 Albert Krewinkel
    License     : GNU GPL, version 2 or above
 
    Maintainer  : Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
@@ -29,59 +30,54 @@ module Text.Pandoc.Lua
   ( LuaException (..)
   , runLuaFilter
   , runPandocLua
-  , pushPandocModule
   ) where
 
-import Control.Monad (when, (>=>))
-import Foreign.Lua (FromLuaStack (peek), Lua, LuaException (..),
-                    Status (OK), ToLuaStack (push))
+import Prelude
+import Control.Monad ((>=>))
+import Foreign.Lua (Lua, LuaException (..))
 import Text.Pandoc.Class (PandocIO)
 import Text.Pandoc.Definition (Pandoc)
 import Text.Pandoc.Lua.Filter (LuaFilter, walkMWithLuaFilter)
-import Text.Pandoc.Lua.Init (runPandocLua)
-import Text.Pandoc.Lua.Module.Pandoc (pushModule) -- TODO: remove
+import Text.Pandoc.Lua.Init (runPandocLua, registerScriptPath)
+import Text.Pandoc.Lua.Util (popValue)
+import Text.Pandoc.Options (ReaderOptions)
+
 import qualified Foreign.Lua as Lua
 
 -- | Run the Lua filter in @filterPath@ for a transformation to target
 -- format @format@. Pandoc uses Lua init files to setup the Lua
 -- interpreter.
-runLuaFilter :: FilePath -> String
+runLuaFilter :: ReaderOptions -> FilePath -> String
              -> Pandoc -> PandocIO (Either LuaException Pandoc)
-runLuaFilter filterPath format doc =
-  runPandocLua (runLuaFilter' filterPath format doc)
+runLuaFilter ropts filterPath format doc =
+  runPandocLua (runLuaFilter' ropts filterPath format doc)
 
-runLuaFilter' :: FilePath -> String
+runLuaFilter' :: ReaderOptions -> FilePath -> String
               -> Pandoc -> Lua Pandoc
-runLuaFilter' filterPath format pd = do
-  -- store module in global "pandoc"
+runLuaFilter' ropts filterPath format pd = do
   registerFormat
+  registerReaderOptions
+  registerScriptPath filterPath
   top <- Lua.gettop
   stat <- Lua.dofile filterPath
-  if stat /= OK
-    then do
-      luaErrMsg <- peek (-1) <* Lua.pop 1
-      Lua.throwLuaError luaErrMsg
+  if stat /= Lua.OK
+    then Lua.throwTopMessageAsError
     else do
       newtop <- Lua.gettop
-      -- Use the implicitly defined global filter if nothing was returned
-      when (newtop - top < 1) pushGlobalFilter
-      luaFilters <- peek (-1)
+      -- Use the returned filters, or the implicitly defined global filter if
+      -- nothing was returned.
+      luaFilters <- if newtop - top >= 1
+                    then Lua.peek Lua.stackTop
+                    else Lua.getglobal "_G" *> fmap (:[]) popValue
       runAll luaFilters pd
  where
   registerFormat = do
-    push format
+    Lua.push format
     Lua.setglobal "FORMAT"
 
-pushGlobalFilter :: Lua ()
-pushGlobalFilter = do
-  Lua.newtable
-  Lua.getglobal' "pandoc.global_filter"
-  Lua.call 0 1
-  Lua.rawseti (-2) 1
+  registerReaderOptions = do
+    Lua.push ropts
+    Lua.setglobal "PANDOC_READER_OPTIONS"
 
 runAll :: [LuaFilter] -> Pandoc -> Lua Pandoc
 runAll = foldr ((>=>) . walkMWithLuaFilter) return
-
--- | DEPRECATED: Push the pandoc module to the Lua Stack.
-pushPandocModule :: Maybe FilePath -> Lua Lua.NumResults
-pushPandocModule = pushModule

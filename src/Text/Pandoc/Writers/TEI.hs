@@ -1,7 +1,8 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternGuards     #-}
 {-
-Copyright (C) 2006-2017 John MacFarlane <jgm@berkeley.edu>
+Copyright (C) 2006-2018 John MacFarlane <jgm@berkeley.edu>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -20,7 +21,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 {- |
    Module      : Text.Pandoc.Writers.Docbook
-   Copyright   : Copyright (C) 2006-2017 John MacFarlane
+   Copyright   : Copyright (C) 2006-2018 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -30,10 +31,10 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 Conversion of 'Pandoc' documents to Docbook XML.
 -}
 module Text.Pandoc.Writers.TEI (writeTEI) where
+import Prelude
 import Data.Char (toLower)
 import Data.List (isPrefixOf, stripPrefix)
 import Data.Text (Text)
-import qualified Text.Pandoc.Builder as B
 import Text.Pandoc.Class (PandocMonad, report)
 import Text.Pandoc.Definition
 import Text.Pandoc.Highlighting (languages, languagesByExtension)
@@ -45,16 +46,6 @@ import Text.Pandoc.Shared
 import Text.Pandoc.Templates (renderTemplate')
 import Text.Pandoc.Writers.Shared
 import Text.Pandoc.XML
-
--- | Convert list of authors to a docbook <author> section
-authorToTEI :: PandocMonad m => WriterOptions -> [Inline] -> m B.Inlines
-authorToTEI opts name' = do
-  name <- render Nothing <$> inlinesToTEI opts name'
-  let colwidth = if writerWrapText opts == WrapAuto
-                    then Just $ writerColumns opts
-                    else Nothing
-  return $ B.rawInline "tei" $ render colwidth $
-      inTagsSimple "author" (text $ escapeStringForXML name)
 
 -- | Convert Pandoc document to string in Docbook format.
 writeTEI :: PandocMonad m => WriterOptions -> Pandoc -> m Text
@@ -70,13 +61,11 @@ writeTEI opts (Pandoc meta blocks) = do
                    TopLevelChapter -> 0
                    TopLevelSection -> 1
                    TopLevelDefault -> 1
-  auths'      <- mapM (authorToTEI opts) $ docAuthors meta
-  let meta'    = B.setMeta "author" auths' meta
   metadata <- metaToJSON opts
                  (fmap (render' . vcat) .
                    mapM (elementToTEI opts startLvl) . hierarchicalize)
                  (fmap render' . inlinesToTEI opts)
-                 meta'
+                 meta
   main    <- (render' . vcat) <$> mapM (elementToTEI opts startLvl) elements
   let context = defField "body" main
               $
@@ -90,7 +79,7 @@ writeTEI opts (Pandoc meta blocks) = do
 -- | Convert an Element to TEI.
 elementToTEI :: PandocMonad m => WriterOptions -> Int -> Element -> m Doc
 elementToTEI opts _   (Blk block) = blockToTEI opts block
-elementToTEI opts lvl (Sec _ _num (id',_,_) title elements) = do
+elementToTEI opts lvl (Sec _ _num attr title elements) = do
   -- TEI doesn't allow sections with no content, so insert some if needed
   let elements' = if null elements
                     then [Blk (Para [])]
@@ -103,8 +92,7 @@ elementToTEI opts lvl (Sec _ _num (id',_,_) title elements) = do
                    | otherwise        -> "section"
   contents <- vcat <$> mapM (elementToTEI opts (lvl + 1)) elements'
   titleContents <- inlinesToTEI opts title
-  return $ inTags True "div" (("type", divType) :
-    [("id", writerIdentifierPrefix opts ++ id') | not (null id')]) $
+  return $ inTags True "div" (("type", divType) : idFromAttr opts attr) $
       inTagsSimple "head" titleContents $$ contents
 
 -- | Convert a list of Pandoc blocks to TEI.
@@ -142,10 +130,10 @@ listItemToTEI opts item =
   inTagsIndented "item" <$> blocksToTEI opts (map plainToPara item)
 
 imageToTEI :: PandocMonad m => WriterOptions -> Attr -> String -> m Doc
-imageToTEI _ attr src = return $ selfClosingTag "graphic" $
-  ("url", src) : idAndRole attr ++ dims
+imageToTEI opts attr src = return $ selfClosingTag "graphic" $
+  ("url", src) : idFromAttr opts attr ++ dims
   where
-    dims = go Width "width" ++ go Height "depth"
+    dims = go Width "width" ++ go Height "height"
     go dir dstr = case dimension dir attr of
                     Just a  -> [(dstr, show a)]
                     Nothing -> []
@@ -155,8 +143,8 @@ blockToTEI :: PandocMonad m => WriterOptions -> Block -> m Doc
 blockToTEI _ Null = return empty
 -- Add ids to paragraphs in divs with ids - this is needed for
 -- pandoc-citeproc to get link anchors in bibliographies:
-blockToTEI opts (Div (ident,_,_) [Para lst]) = do
-  let attribs = [("id", ident) | not (null ident)]
+blockToTEI opts (Div attr [Para lst]) = do
+  let attribs = idFromAttr opts attr
   inTags False "p" attribs <$> inlinesToTEI opts lst
 blockToTEI opts (Div _ bs) = blocksToTEI opts $ map plainToPara bs
 blockToTEI _ h@Header{} = do
@@ -320,8 +308,10 @@ inlineToTEI opts (Link attr txt (src, _))
               return $ linktext <+> char '(' <> emailLink <> char ')'
   | otherwise =
       (if "#" `isPrefixOf` src
-            then inTags False "ref" $ ("target", drop 1 src) : idAndRole attr
-            else inTags False "ref" $ ("target", src) : idAndRole attr ) <$>
+            then inTags False "ref" $ ("target", drop 1 src)
+                 : idFromAttr opts attr
+            else inTags False "ref" $ ("target", src)
+                 : idFromAttr opts attr ) <$>
         inlinesToTEI opts txt
 inlineToTEI opts (Image attr description (src, tit)) = do
   let titleDoc = if null tit
@@ -337,12 +327,8 @@ inlineToTEI opts (Image attr description (src, tit)) = do
 inlineToTEI opts (Note contents) =
   inTagsIndented "note" <$> blocksToTEI opts contents
 
-idAndRole :: Attr -> [(String, String)]
-idAndRole (id',cls,_) = ident ++ role
-  where
-    ident = if null id'
-               then []
-               else [("id", id')]
-    role  = if null cls
-               then []
-               else [("role", unwords cls)]
+idFromAttr :: WriterOptions -> Attr -> [(String, String)]
+idFromAttr opts (id',_,_) =
+  if null id'
+     then []
+     else [("xml:id", writerIdentifierPrefix opts ++ id')]

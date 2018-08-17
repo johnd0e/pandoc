@@ -1,6 +1,8 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 module Tests.Command (findPandoc, runTest, tests)
 where
 
+import Prelude
 import Data.Algorithm.Diff
 import qualified Data.ByteString as BS
 import Data.List (isSuffixOf)
@@ -40,7 +42,7 @@ runTest testname pandocpath cmd inp norm = testCase testname $ do
   -- filter \r so the tests will work on Windows machines
   let out = filter (/= '\r') $ err' ++ out'
   result  <- if ec == ExitSuccess
-                then do
+                then
                   if out == norm
                      then return TestPassed
                      else return
@@ -52,6 +54,7 @@ runTest testname pandocpath cmd inp norm = testCase testname $ do
   assertBool (show result) (result == TestPassed)
 
 tests :: TestTree
+{-# NOINLINE tests #-}
 tests = unsafePerformIO $ do
   pandocpath <- findPandoc
   files <- filter (".md" `isSuffixOf`) <$>
@@ -89,7 +92,6 @@ extractCommandTest pandocpath fp = unsafePerformIO $ do
   contents <- UTF8.toText <$> BS.readFile ("command" </> fp)
   Pandoc _ blocks <- runIOorExplode (readMarkdown
                         def{ readerExtensions = pandocExtensions } contents)
-  let codeblocks = map extractCode $ filter isCodeBlock $ blocks
+  let codeblocks = map extractCode $ filter isCodeBlock blocks
   let cases = map (runCommandTest pandocpath) $ zip [1..] codeblocks
   return $ testGroup fp cases
-

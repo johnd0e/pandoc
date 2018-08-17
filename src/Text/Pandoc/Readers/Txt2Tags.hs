@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-
 Copyright (C) 2014 Matthew Pickering <matthewtpickering@gmail.com>
 
@@ -31,14 +32,14 @@ module Text.Pandoc.Readers.Txt2Tags ( readTxt2Tags
                                     )
                                     where
 
+import Prelude
 import Control.Monad (guard, void, when)
 import Control.Monad.Except (catchError, throwError)
 import Control.Monad.Reader (Reader, asks, runReader)
 import Data.Char (toLower)
 import Data.Default
-import Data.List (intercalate, intersperse, transpose)
+import Data.List (intercalate, transpose)
 import Data.Maybe (fromMaybe)
-import Data.Monoid ((<>))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Format (formatTime)
@@ -46,7 +47,7 @@ import Text.Pandoc.Builder (Blocks, Inlines, trimInlines)
 import qualified Text.Pandoc.Builder as B
 import Text.Pandoc.Class (PandocMonad)
 import qualified Text.Pandoc.Class as P
-import Text.Pandoc.Compat.Time (defaultTimeLocale)
+import Data.Time (defaultTimeLocale)
 import Text.Pandoc.Definition
 import Text.Pandoc.Options
 import Text.Pandoc.Parsing hiding (space, spaces, uri)
@@ -197,7 +198,7 @@ para = try $ do
 commentBlock :: T2T Blocks
 commentBlock = try (blockMarkupArea anyLine (const mempty) "%%%") <|> comment
 
--- Seperator and Strong line treated the same
+-- Separator and Strong line treated the same
 hrule :: T2T Blocks
 hrule = try $ do
   spaces
@@ -444,7 +445,7 @@ inlineMarkup p f c special = try $ do
       let end' = case drop 2 end of
                           "" -> mempty
                           xs -> special xs
-      return $ f (start' <> body' <> end')
+      return $ f (start' `mappend` body' `mappend` end')
     Nothing -> do -- Either bad or case such as *****
       guard (l >= 5)
       let body' = replicate (l - 4) c
@@ -463,7 +464,7 @@ titleLink = try $ do
   char ']'
   let link' = last tokens
   guard $ not $ null link'
-  let tit = concat (intersperse " " (init tokens))
+  let tit = unwords (init tokens)
   return $ B.link link' "" (B.text tit)
 
 -- Link with image
@@ -529,8 +530,7 @@ image =  try $ do
   -- List taken from txt2tags source
   let extensions = [".jpg", ".jpeg", ".gif", ".png", ".eps", ".bmp"]
   char '['
-  path <- manyTill (noneOf "\n\t\r ") (try $ lookAhead (oneOfStrings extensions))
-  ext <- oneOfStrings extensions
+  (path, ext) <- manyUntil (noneOf "\n\t\r ") (oneOfStrings extensions)
   char ']'
   return $ B.image (path ++ ext) "" mempty
 
@@ -575,8 +575,10 @@ symbol = B.str . (:[]) <$> oneOf specialChars
 getTarget :: T2T String
 getTarget = do
   mv <- lookupMeta "target" . stateMeta <$> getState
-  let MetaString target = fromMaybe (MetaString "html") mv
-  return target
+  return $ case mv of
+              Just (MetaString target)        -> target
+              Just (MetaInlines [Str target]) -> target
+              _                               -> "html"
 
 atStart :: T2T ()
 atStart = (sourceColumn <$> getPosition) >>= guard . (== 1)

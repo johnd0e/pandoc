@@ -1,6 +1,8 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Tests.Readers.Creole (tests) where
 
+import Prelude
 import Data.Text (Text)
 import qualified Data.Text as T
 import Test.Tasty
@@ -224,7 +226,7 @@ tests = [
                     <> " bar")
         , "escaped auto link" =:
           "foo ~http://foo.example.com/bar/baz.html bar"
-          =?> para ("foo http://foo.example.com/bar/baz.html bar")
+          =?> para "foo http://foo.example.com/bar/baz.html bar"
         , "wiki link simple" =:
           "foo [[http://foo.example.com/foo.png]] bar"
           =?> para ("foo "

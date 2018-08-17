@@ -1,10 +1,13 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 module Tests.Readers.Docx (tests) where
 
+import Prelude
 import Codec.Archive.Zip
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as B
 import qualified Data.Map as M
 import qualified Data.Text as T
+import Data.Maybe
 import System.IO.Unsafe
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -46,7 +49,7 @@ compareOutput opts docxFile nativeFile = do
   nf <- UTF8.toText <$> BS.readFile nativeFile
   p <- runIOorExplode $ readDocx opts df
   df' <- runIOorExplode $ readNative def nf
-  return $ (noNorm p, noNorm df')
+  return (noNorm p, noNorm df')
 
 testCompareWithOptsIO :: ReaderOptions -> String -> FilePath -> FilePath -> IO TestTree
 testCompareWithOptsIO opts name docxFile nativeFile = do
@@ -87,11 +90,9 @@ compareMediaPathIO mediaPath mediaBag docxPath = do
                  Nothing      -> error ("couldn't find " ++
                                         mediaPath ++
                                         " in media bag")
-      docxBS = case docxMedia of
-                 Just bs -> bs
-                 Nothing -> error ("couldn't find " ++
-                                   mediaPath ++
-                                   " in media bag")
+      docxBS = fromMaybe (error ("couldn't find " ++
+                        mediaPath ++
+                        " in media bag")) docxMedia
   return $ mbBS == docxBS
 
 compareMediaBagIO :: FilePath -> IO Bool
@@ -127,6 +128,10 @@ tests = [ testGroup "inlines"
             "hyperlinks"
             "docx/links.docx"
             "docx/links.native"
+          , testCompare
+            "hyperlinks in <w:instrText> tag"
+            "docx/instrText_hyperlink.docx"
+            "docx/instrText_hyperlink.native"
           , testCompare
             "inline image"
             "docx/image.docx"
@@ -171,6 +176,26 @@ tests = [ testGroup "inlines"
             "inline code in subscript and superscript"
             "docx/verbatim_subsuper.docx"
             "docx/verbatim_subsuper.native"
+          , testCompare
+            "inlines inside of Structured Document Tags"
+            "docx/sdt_elements.docx"
+            "docx/sdt_elements.native"
+          , testCompare
+            "nested Structured Document Tags"
+            "docx/nested_sdt.docx"
+            "docx/nested_sdt.native"
+          , testCompare
+            "nested Smart Tags"
+            "docx/nested_smart_tags.docx"
+            "docx/nested_smart_tags.native"
+          , testCompare
+            "remove anchor spans with nothing pointing to them"
+            "docx/unused_anchors.docx"
+            "docx/unused_anchors.native"
+          , testCompare
+            "collapse overlapping targets (anchor spans)"
+            "docx/overlapping_targets.docx"
+            "docx/overlapping_targets.native"
           ]
         , testGroup "blocks"
           [ testCompare
@@ -258,9 +283,17 @@ tests = [ testGroup "inlines"
             "docx/table_one_row.docx"
             "docx/table_one_row.native"
           , testCompare
+            "tables with variable width"
+            "docx/table_variable_width.docx"
+            "docx/table_variable_width.native"
+          , testCompare
             "code block"
             "docx/codeblock.docx"
             "docx/codeblock.native"
+          , testCompare
+            "combine adjacent code blocks"
+            "docx/adjacent_codeblocks.docx"
+            "docx/adjacent_codeblocks.native"
           , testCompare
             "dropcap paragraphs"
             "docx/drop_cap.docx"
@@ -323,6 +356,18 @@ tests = [ testGroup "inlines"
             "comments (all comments)"
             "docx/comments.docx"
             "docx/comments.native"
+          , testCompareWithOpts def{readerTrackChanges=AcceptChanges}
+            "paragraph insertion/deletion (accept)"
+            "docx/paragraph_insertion_deletion.docx"
+            "docx/paragraph_insertion_deletion_accept.native"
+          , testCompareWithOpts def{readerTrackChanges=RejectChanges}
+            "paragraph insertion/deletion (reject)"
+            "docx/paragraph_insertion_deletion.docx"
+            "docx/paragraph_insertion_deletion_reject.native"
+          , testCompareWithOpts def{readerTrackChanges=AllChanges}
+            "paragraph insertion/deletion (all)"
+            "docx/paragraph_insertion_deletion.docx"
+            "docx/paragraph_insertion_deletion_all.native"
           , testForWarningsWithOpts def{readerTrackChanges=AcceptChanges}
             "comment warnings (accept -- no warnings)"
             "docx/comments_warning.docx"
@@ -340,6 +385,17 @@ tests = [ testGroup "inlines"
           [ testMediaBag
             "image extraction"
             "docx/image.docx"
+          ]
+        , testGroup "custom styles"
+          [ testCompare
+            "custom styles (`+styles`) not enabled (default)"
+            "docx/custom-style-reference.docx"
+            "docx/custom-style-no-styles.native"
+          , testCompareWithOpts
+            def{readerExtensions=extensionsFromList [Ext_styles]}
+            "custom styles (`+styles`) enabled"
+            "docx/custom-style-reference.docx"
+            "docx/custom-style-with-styles.native"
           ]
         , testGroup "metadata"
           [ testCompareWithOpts def{readerStandalone=True}

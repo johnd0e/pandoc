@@ -1,7 +1,8 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings, ScopedTypeVariables, CPP #-}
 {-# OPTIONS_GHC -fno-warn-type-defaults #-}
 {-
-  Copyright (C) 2011-2017 John MacFarlane <jgm@berkeley.edu>
+  Copyright (C) 2011-2018 John MacFarlane <jgm@berkeley.edu>
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -20,7 +21,7 @@
 
 {- |
 Module      : Text.Pandoc.ImageSize
-Copyright   : Copyright (C) 2011-2017 John MacFarlane
+Copyright   : Copyright (C) 2011-2018 John MacFarlane
 License     : GNU GPL, version 2 or above
 
 Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -49,6 +50,7 @@ module Text.Pandoc.ImageSize ( ImageType(..)
                              , showInPixel
                              , showFl
                              ) where
+import Prelude
 import Data.ByteString (ByteString, unpack)
 import qualified Data.ByteString.Char8 as B
 import qualified Data.ByteString.Lazy as BL
@@ -71,7 +73,7 @@ import Data.Maybe (fromMaybe)
 -- quick and dirty functions to get image sizes
 -- algorithms borrowed from wwwis.pl
 
-data ImageType = Png | Gif | Jpeg | Svg | Pdf | Eps deriving Show
+data ImageType = Png | Gif | Jpeg | Svg | Pdf | Eps | Emf deriving Show
 data Direction = Width | Height
 instance Show Direction where
   show Width  = "width"
@@ -83,6 +85,7 @@ data Dimension = Pixel Integer
                | Inch Double
                | Percent Double
                | Em Double
+               deriving Eq
 
 instance Show Dimension where
   show (Pixel a)      = show   a ++ "px"
@@ -124,6 +127,9 @@ imageType img = case B.take 4 img of
                      "%!PS"
                        |  B.take 4 (B.drop 1 $ B.dropWhile (/=' ') img) == "EPSF"
                                         -> return Eps
+                     "\x01\x00\x00\x00"
+                       | B.take 4 (B.drop 40 img) == " EMF"
+                                        -> return Emf
                      _                  -> mzero
 
 findSvgTag :: ByteString -> Bool
@@ -137,7 +143,8 @@ imageSize opts img =
        Just Jpeg -> jpegSize img
        Just Svg  -> mbToEither "could not determine SVG size" $ svgSize opts img
        Just Eps  -> mbToEither "could not determine EPS size" $ epsSize img
-       Just Pdf  -> Left "could not determine PDF size" -- TODO
+       Just Pdf  -> mbToEither "could not determine PDF size" $ pdfSize img
+       Just Emf  -> mbToEither "could not determine EMF size" $ emfSize img
        Nothing   -> Left "could not determine image type"
   where mbToEither msg Nothing  = Left msg
         mbToEither _   (Just x) = Right x
@@ -276,6 +283,29 @@ epsSize img = do
                           , dpiY = 72 }
                      _ -> mzero
 
+pdfSize :: ByteString -> Maybe ImageSize
+pdfSize img =
+  case dropWhile (\l -> not (l == "stream" ||
+                             "/MediaBox" `B.isPrefixOf` l)) (B.lines img) of
+       (x:_)
+         | "/MediaBox" `B.isPrefixOf` x
+         -> case B.words . B.takeWhile (/=']')
+                         . B.drop 1
+                         . B.dropWhile (/='[')
+                         $ x of
+                     [x1, y1, x2, y2] -> do
+                        x1' <- safeRead $ B.unpack x1
+                        x2' <- safeRead $ B.unpack x2
+                        y1' <- safeRead $ B.unpack y1
+                        y2' <- safeRead $ B.unpack y2
+                        return ImageSize{
+                            pxX  = x2' - x1'
+                          , pxY  = y2' - y1'
+                          , dpiX = 72
+                          , dpiY = 72 }
+                     _ -> mzero
+       _    -> mzero
+
 pngSize :: ByteString -> Maybe ImageSize
 pngSize img = do
   let (h, rest) = B.splitAt 8 img
@@ -289,20 +319,22 @@ pngSize img = do
                     (shift w1 24 + shift w2 16 + shift w3 8 + w4,
                      shift h1 24 + shift h2 16 + shift h3 8 + h4)
                 _ -> Nothing -- "PNG parse error"
-  let (dpix, dpiy) = findpHYs rest''
+  (dpix, dpiy) <- findpHYs rest''
   return ImageSize { pxX  = x, pxY = y, dpiX = dpix, dpiY = dpiy }
 
-findpHYs :: ByteString -> (Integer, Integer)
+findpHYs :: ByteString -> Maybe (Integer, Integer)
 findpHYs x
-  | B.null x || "IDAT" `B.isPrefixOf` x = (72,72)
+  | B.null x || "IDAT" `B.isPrefixOf` x = return (72,72)
   | "pHYs" `B.isPrefixOf` x =
-    let [x1,x2,x3,x4,y1,y2,y3,y4,u] =
-          map fromIntegral $ unpack $ B.take 9 $ B.drop 4 x
-        factor = if u == 1 -- dots per meter
-                    then \z -> z * 254 `div` 10000
-                    else const 72
-    in  ( factor $ shift x1 24 + shift x2 16 + shift x3 8 + x4,
-          factor $ shift y1 24 + shift y2 16 + shift y3 8 + y4 )
+    case map fromIntegral $ unpack $ B.take 9 $ B.drop 4 x of
+         [x1,x2,x3,x4,y1,y2,y3,y4,u] -> do
+           let factor = if u == 1 -- dots per meter
+                          then \z -> z * 254 `div` 10000
+                          else const 72
+           return
+              ( factor $ shift x1 24 + shift x2 16 + shift x3 8 + x4,
+                factor $ shift y1 24 + shift y2 16 + shift y3 8 + y4 )
+         _ -> mzero
   | otherwise = findpHYs $ B.drop 1 x  -- read another byte
 
 gifSize :: ByteString -> Maybe ImageSize
@@ -334,6 +366,38 @@ svgSize opts img = do
   , dpiY = dpi
   }
 
+emfSize :: ByteString -> Maybe ImageSize
+emfSize img =
+  let
+    parseheader = runGetOrFail $ do
+      skip 0x18             -- 0x00
+      frameL <- getWord32le -- 0x18  measured in 1/100 of a millimetre
+      frameT <- getWord32le -- 0x1C
+      frameR <- getWord32le -- 0x20
+      frameB <- getWord32le -- 0x24
+      skip 0x20             -- 0x28
+      deviceX <- getWord32le  -- 0x48 pixels of reference device
+      deviceY <- getWord32le  -- 0x4C
+      mmX <- getWord32le      -- 0x50 real mm of reference device (always 320*240?)
+      mmY <- getWord32le      -- 0x58
+      -- end of header
+      let
+        w = (deviceX * (frameR - frameL)) `quot` (mmX * 100)
+        h = (deviceY * (frameB - frameT)) `quot` (mmY * 100)
+        dpiW = (deviceX * 254) `quot` (mmX * 10)
+        dpiH = (deviceY * 254) `quot` (mmY * 10)
+      return $ ImageSize
+        { pxX = fromIntegral w
+        , pxY = fromIntegral h
+        , dpiX = fromIntegral dpiW
+        , dpiY = fromIntegral dpiH
+        }
+  in
+    case parseheader . BL.fromStrict $ img of
+      Left _ -> Nothing
+      Right (_, _, size) -> Just size
+
+
 jpegSize :: ByteString -> Either String ImageSize
 jpegSize img =
   let (hdr, rest) = B.splitAt 4 img
@@ -346,20 +410,21 @@ jpegSize img =
 
 jfifSize :: ByteString -> Either String ImageSize
 jfifSize rest =
-  let [dpiDensity,dpix1,dpix2,dpiy1,dpiy2] = map fromIntegral
-                                           $ unpack $ B.take 5 $B.drop 9 rest
-      factor = case dpiDensity of
-                    1 -> id
-                    2 -> \x -> x * 254 `div` 10
-                    _ -> const 72
-      dpix = factor (shift dpix1 8 + dpix2)
-      dpiy = factor (shift dpiy1 8 + dpiy2)
-  in case findJfifSize rest of
-       Left msg    -> Left msg
-       Right (w,h) ->Right ImageSize { pxX = w
+  case map fromIntegral $ unpack $ B.take 5 $ B.drop 9 rest of
+    [dpiDensity,dpix1,dpix2,dpiy1,dpiy2] ->
+      let factor = case dpiDensity of
+                        1 -> id
+                        2 -> \x -> x * 254 `div` 10
+                        _ -> const 72
+          dpix = factor (shift dpix1 8 + dpix2)
+          dpiy = factor (shift dpiy1 8 + dpiy2)
+      in case findJfifSize rest of
+         Left msg    -> Left msg
+         Right (w,h) -> Right ImageSize { pxX = w
                                         , pxY = h
                                         , dpiX = dpix
                                         , dpiY = dpiy }
+    _ -> Left "unable to determine JFIF size"
 
 findJfifSize :: ByteString -> Either String (Integer,Integer)
 findJfifSize bs =
@@ -479,10 +544,12 @@ exifHeader hdr = do
   let resfactor = case lookup ResolutionUnit allentries of
                         Just (UnsignedShort 1) -> 100 / 254
                         _ -> 1
-  let xres = maybe 72 (\(UnsignedRational x) -> floor $ x * resfactor)
-             $ lookup XResolution allentries
-  let yres = maybe 72 (\(UnsignedRational x) -> floor $ x * resfactor)
-             $ lookup YResolution allentries
+  let xres = case lookup XResolution allentries of
+                  Just (UnsignedRational x) -> floor (x * resfactor)
+                  _ -> 72
+  let yres = case lookup YResolution allentries of
+                  Just (UnsignedRational y) -> floor (y * resfactor)
+                  _ -> 72
   return ImageSize{
                     pxX  = wdth
                   , pxY  = hght

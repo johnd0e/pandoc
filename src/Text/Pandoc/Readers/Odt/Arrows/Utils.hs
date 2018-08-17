@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-
 Copyright (C) 2015 Martin Linnemann <theCodingMarlin@googlemail.com>
 
@@ -39,6 +40,7 @@ with an equivalent return value.
 -- We export everything
 module Text.Pandoc.Readers.Odt.Arrows.Utils where
 
+import Prelude
 import Control.Arrow
 import Control.Monad (join)
 
@@ -61,13 +63,13 @@ and6 :: (Arrow a)
      => a b c0->a b c1->a b c2->a b c3->a b c4->a b c5
      -> a b (c0,c1,c2,c3,c4,c5      )
 
-and3 a b c           = (and2 a b          ) &&& c
+and3 a b c           = and2 a b &&& c
                        >>^ \((z,y          ) , x) -> (z,y,x          )
-and4 a b c d         = (and3 a b c        ) &&& d
+and4 a b c d         = and3 a b c &&& d
                        >>^ \((z,y,x        ) , w) -> (z,y,x,w        )
-and5 a b c d e       = (and4 a b c d      ) &&& e
+and5 a b c d e       = and4 a b c d &&& e
                        >>^ \((z,y,x,w      ) , v) -> (z,y,x,w,v      )
-and6 a b c d e f     = (and5 a b c d e    ) &&& f
+and6 a b c d e f     = and5 a b c d e &&& f
                        >>^ \((z,y,x,w,v    ) , u) -> (z,y,x,w,v,u    )
 
 liftA2 :: (Arrow a) => (x -> y -> z) -> a b x -> a b y -> a b z
@@ -98,7 +100,7 @@ liftA  fun a = a >>^ fun
 -- | Duplicate a value to subsequently feed it into different arrows.
 -- Can almost always be replaced with '(&&&)', 'keepingTheValue',
 -- or even '(|||)'.
--- Aequivalent to
+-- Equivalent to
 -- > returnA &&& returnA
 duplicate :: (Arrow a) => a b (b,b)
 duplicate = arr $ join (,)
@@ -112,7 +114,7 @@ infixr 2 >>%
 
 
 -- | Duplicate a value and apply an arrow to the second instance.
--- Aequivalent to
+-- Equivalent to
 -- > \a -> duplicate >>> second a
 -- or
 -- > \a -> returnA &&& a
@@ -211,9 +213,9 @@ a ^>>?% f = arr a >>?^ (uncurry f)
 ---
 (>>?%?) :: (ArrowChoice a)
            => FallibleArrow a x f (b,b')
-           -> (b -> b' -> (Either f c))
+           -> (b -> b' -> Either f c)
            -> FallibleArrow a x f c
-a >>?%? f = a >>?^? (uncurry f)
+a >>?%? f = a >>?^? uncurry f
 
 infixr 1  >>?,  >>?^,  >>?^?
 infixr 1 ^>>?, >>?!

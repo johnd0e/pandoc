@@ -1,7 +1,8 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TupleSections    #-}
 {-
-Copyright (C) 2014-2017 Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
+Copyright (C) 2014-2018 Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -20,7 +21,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 {- |
    Module      : Text.Pandoc.Readers.Org.Meta
-   Copyright   : Copyright (C) 2014-2017 Albert Krewinkel
+   Copyright   : Copyright (C) 2014-2018 Albert Krewinkel
    License     : GNU GPL, version 2 or above
 
    Maintainer  : Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
@@ -33,6 +34,7 @@ module Text.Pandoc.Readers.Org.Meta
   , metaLine
   ) where
 
+import Prelude
 import Text.Pandoc.Readers.Org.BlockStarts
 import Text.Pandoc.Readers.Org.ExportSettings (exportSettings)
 import Text.Pandoc.Readers.Org.Inlines
@@ -43,10 +45,12 @@ import Text.Pandoc.Builder (Blocks, Inlines)
 import qualified Text.Pandoc.Builder as B
 import Text.Pandoc.Class (PandocMonad)
 import Text.Pandoc.Definition
+import Text.Pandoc.Shared (safeRead)
 
 import Control.Monad (mzero, void, when)
 import Data.Char (toLower)
 import Data.List (intersperse)
+import Data.Maybe (fromMaybe)
 import qualified Data.Map as M
 import Network.HTTP (urlEncode)
 
@@ -154,6 +158,8 @@ optionLine = try $ do
     "seq_todo" -> todoSequence >>= updateState . registerTodoSequence
     "typ_todo" -> todoSequence >>= updateState . registerTodoSequence
     "macro"    -> macroDefinition >>= updateState . registerMacro
+    "pandoc-emphasis-pre" -> emphChars >>= updateState . setEmphasisPreChar
+    "pandoc-emphasis-post" -> emphChars >>= updateState . setEmphasisPostChar
     _          -> mzero
 
 addLinkFormat :: Monad m => String
@@ -183,6 +189,21 @@ parseFormat = try $ replacePlain <|> replaceUrl <|> justAppend
 
    rest            = manyTill anyChar         (eof <|> () <$ oneOf "\n\r")
    tillSpecifier c = manyTill (noneOf "\n\r") (try $ string ('%':c:""))
+
+setEmphasisPreChar :: Maybe [Char] -> OrgParserState -> OrgParserState
+setEmphasisPreChar csMb st =
+  let preChars = fromMaybe (orgStateEmphasisPostChars defaultOrgParserState) csMb
+  in st { orgStateEmphasisPreChars = preChars }
+
+setEmphasisPostChar :: Maybe [Char] -> OrgParserState -> OrgParserState
+setEmphasisPostChar csMb st =
+  let postChars = fromMaybe (orgStateEmphasisPostChars defaultOrgParserState) csMb
+  in st { orgStateEmphasisPostChars = postChars }
+
+emphChars :: Monad m => OrgParser m (Maybe [Char])
+emphChars = do
+  skipSpaces
+  safeRead <$> anyLine
 
 inlinesTillNewline :: PandocMonad m => OrgParser m (F Inlines)
 inlinesTillNewline = do

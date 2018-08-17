@@ -1,9 +1,8 @@
-{-# LANGUAGE FlexibleInstances    #-}
-{-# LANGUAGE RelaxedPolyRec       #-}
-{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE RelaxedPolyRec #-}
 -- RelaxedPolyRec needed for inlinesBetween on GHC < 7
 {-
-  Copyright (C) 2012-2017 John MacFarlane <jgm@berkeley.edu>
+  Copyright (C) 2012-2018 John MacFarlane <jgm@berkeley.edu>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -22,7 +21,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 {- |
    Module      : Text.Pandoc.Readers.MediaWiki
-   Copyright   : Copyright (C) 2012-2017 John MacFarlane
+   Copyright   : Copyright (C) 2012-2018 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -38,6 +37,7 @@ _ parse templates?
 -}
 module Text.Pandoc.Readers.MediaWiki ( readMediaWiki ) where
 
+import Prelude
 import Control.Monad
 import Control.Monad.Except (throwError)
 import Data.Char (isDigit, isSpace)
@@ -45,7 +45,6 @@ import qualified Data.Foldable as F
 import Data.List (intercalate, intersperse, isPrefixOf)
 import qualified Data.Map as M
 import Data.Maybe (fromMaybe, maybeToList)
-import Data.Monoid ((<>))
 import Data.Sequence (ViewL (..), viewl, (<|))
 import qualified Data.Set as Set
 import Data.Text (Text, unpack)
@@ -231,7 +230,8 @@ para = do
 table :: PandocMonad m => MWParser m Blocks
 table = do
   tableStart
-  styles <- option [] parseAttrs
+  styles <- option [] $
+               parseAttrs <* skipMany spaceChar <* optional (char '|')
   skipMany spaceChar
   optional blanklines
   let tableWidth = case lookup "width" styles of
@@ -282,17 +282,29 @@ rowsep = try $ guardColumnOne *> skipSpaces *> sym "|-" <*
 
 cellsep :: PandocMonad m => MWParser m ()
 cellsep = try $ do
+  col <- sourceColumn <$> getPosition
   skipSpaces
-  (char '|' *> notFollowedBy (oneOf "-}+") *> optional (char '|'))
-    <|> (char '!' *> optional (char '!'))
+  let pipeSep = do
+        char '|'
+        notFollowedBy (oneOf "-}+")
+        if col == 1
+           then optional (char '|')
+           else void (char '|')
+  let exclSep = do
+        char '!'
+        if col == 1
+           then optional (char '!')
+           else void (char '!')
+  pipeSep <|> exclSep
 
 tableCaption :: PandocMonad m => MWParser m Inlines
 tableCaption = try $ do
   guardColumnOne
   skipSpaces
   sym "|+"
-  optional (try $ parseAttr *> skipSpaces *> char '|' *> skipSpaces)
-  (trimInlines . mconcat) <$> many (notFollowedBy (cellsep <|> rowsep) *> inline)
+  optional (try $ parseAttr *> skipSpaces *> char '|' *> blanklines)
+  (trimInlines . mconcat) <$>
+    many (notFollowedBy (cellsep <|> rowsep) *> inline)
 
 tableRow :: PandocMonad m => MWParser m [((Alignment, Double), Blocks)]
 tableRow = try $ skipMany htmlComment *> many tableCell

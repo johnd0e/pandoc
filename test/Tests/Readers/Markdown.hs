@@ -1,6 +1,8 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Tests.Readers.Markdown (tests) where
 
+import Prelude
 import Data.Text (Text, unpack)
 import qualified Data.Text as T
 import Test.Tasty
@@ -197,7 +199,9 @@ tests = [ testGroup "inline code"
           ]
         , testGroup "emoji"
           [ test markdownGH "emoji symbols" $
-            ":smile: and :+1:" =?> para (text "😄 and 👍")
+            ":smile: and :+1:" =?> para (spanWith ("", ["emoji"], [("data-emoji", "smile")]) "😄" <>
+                                         space <> str "and" <> space <>
+                                         spanWith ("", ["emoji"], [("data-emoji", "+1")]) "👍")
           ]
         , "unbalanced brackets" =:
             "[[[[[[[[[[[[hi" =?> para (text "[[[[[[[[[[[[hi")
@@ -293,6 +297,9 @@ tests = [ testGroup "inline code"
           , test markdownSmart "apostrophe after math" $ -- issue #1909
               "The value of the $x$'s and the systems' condition." =?>
               para (text "The value of the " <> math "x" <> text "\8217s and the systems\8217 condition.")
+          , test markdownSmart "unclosed double quote"
+            ("**this should \"be bold**"
+            =?> para (strong "this should \"be bold"))
           ]
         , testGroup "footnotes"
           [ "indent followed by newline and flush-left text" =:

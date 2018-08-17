@@ -42,7 +42,7 @@ limitation is mostly a help rather than a hindrance, since many
 of the formats pandoc supports have similar limitations.
 
 The best way to explore the pandoc AST is to use `pandoc -t
-native`, which will display the AST correspoding to some
+native`, which will display the AST corresponding to some
 Markdown input:
 
 ```
@@ -187,7 +187,7 @@ Some particularly important options to know about:
 # Builder
 
 Sometimes it's useful to construct a Pandoc document
-programatically.  To make this easier we provide the
+programmatically.  To make this easier we provide the
 module [Text.Pandoc.Builder] `pandoc-types`.
 
 Because concatenating lists is slow, we use special
@@ -454,7 +454,7 @@ structure and calling this function.
 [Text.Pandoc.Class]: https://hackage.haskell.org/package/pandoc/docs/Text-Pandoc-Class.html
 [Text.Pandoc.Options]: https://hackage.haskell.org/package/pandoc/docs/Text-Pandoc-Options.html
 [Text.Pandoc.Extensions]: https://hackage.haskell.org/package/pandoc/docs/Text-Pandoc-Extensions.html
-[Text.Pandoc.Builder]: https://hackage.haskell.org/package/pandoc-types/docs/Text-Pandoc-Definition.html
+[Text.Pandoc.Builder]: https://hackage.haskell.org/package/pandoc-types/docs/Text-Pandoc-Builder.html
 [Text.Pandoc.Templates]: https://hackage.haskell.org/package/pandoc/docs/Text-Pandoc-Templates.html
 [Text.Pandoc.Logging]: https://hackage.haskell.org/package/pandoc/docs/Text-Pandoc-Logging.html
 [Text.Pandoc.App]: https://hackage.haskell.org/package/pandoc/docs/Text-Pandoc-App.html

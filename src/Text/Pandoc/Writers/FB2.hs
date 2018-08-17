@@ -1,8 +1,9 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE PatternGuards #-}
 
 {-
 Copyright (c) 2011-2012 Sergey Astanin
-              2012-2017 John MacFarlane
+              2012-2018 John MacFarlane
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -22,7 +23,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 {- |
 Module      : Text.Pandoc.Writers.FB2
 Copyright   : Copyright (C) 2011-2012 Sergey Astanin
-                            2012-2017 John MacFarlane
+                            2012-2018 John MacFarlane
 License     : GNU GPL, version 2 or above
 
 Maintainer  : John MacFarlane
@@ -37,6 +38,7 @@ FictionBook is an XML-based e-book format. For more information see:
 -}
 module Text.Pandoc.Writers.FB2 (writeFB2)  where
 
+import Prelude
 import Control.Monad (zipWithM)
 import Control.Monad.Except (catchError)
 import Control.Monad.State.Strict (StateT, evalStateT, get, lift, liftM, modify)
@@ -44,7 +46,7 @@ import Data.ByteString.Base64 (encode)
 import qualified Data.ByteString.Char8 as B8
 import Data.Char (isAscii, isControl, isSpace, toLower)
 import Data.Either (lefts, rights)
-import Data.List (intercalate, intersperse, isPrefixOf, stripPrefix)
+import Data.List (intercalate, isPrefixOf, stripPrefix)
 import Data.Text (Text, pack)
 import Network.HTTP (urlEncode)
 import Text.XML.Light
@@ -116,14 +118,25 @@ description meta' = do
   bt <- booktitle meta'
   let as = authors meta'
   dd <- docdate meta'
+  annotation <- case lookupMeta "abstract" meta' of
+                  Just (MetaBlocks bs) -> (list . el "annotation") <$> (cMapM blockToXml $ map unPlain bs)
+                  _ -> pure mempty
   let lang = case lookupMeta "lang" meta' of
                Just (MetaInlines [Str s]) -> [el "lang" $ iso639 s]
                Just (MetaString s)        -> [el "lang" $ iso639 s]
                _                          -> []
              where iso639 = takeWhile (/= '-') -- Convert BCP 47 to ISO 639
+  let coverimage url = do
+        let img = Image nullAttr mempty (url, "")
+        im <- insertImage InlineImage img
+        return [el "coverpage" im]
+  coverpage <- case lookupMeta "cover-image" meta' of
+                    Just (MetaInlines [Str s]) -> coverimage s
+                    Just (MetaString s) -> coverimage s
+                    _       -> return []
   return $ el "description"
-    [ el "title-info" (genre : (bt ++ as ++ dd ++ lang))
-    , el "document-info" [ el "program-used" "pandoc" ] -- FIXME: +version
+    [ el "title-info" (genre : (as ++ bt ++ annotation ++ dd ++ lang))
+    , el "document-info" (el "program-used" "pandoc" : coverpage)
     ]
 
 booktitle :: PandocMonad m => Meta -> FBM m [Content]
@@ -170,7 +183,7 @@ renderSection :: PandocMonad m => Int -> ([Inline], [Block]) -> FBM m Content
 renderSection level (ttl, body) = do
     title <- if null ttl
             then return []
-            else return . list . el "title" . formatTitle $ ttl
+            else list . el "title" <$> formatTitle ttl
     content <- if hasSubsections body
                then renderSections (level + 1) body
                else cMapM blockToXml body
@@ -179,11 +192,9 @@ renderSection level (ttl, body) = do
     hasSubsections = any isHeaderBlock
 
 -- | Only <p> and <empty-line> are allowed within <title> in FB2.
-formatTitle :: [Inline] -> [Content]
+formatTitle :: PandocMonad m => [Inline] -> FBM m [Content]
 formatTitle inlines =
-  let lns = split isLineBreak inlines
-      lns' = map (el "p" . cMap plain) lns
-  in  intersperse (el "empty-line" ()) lns'
+  cMapM (blockToXml . Para) $ split (== LineBreak) inlines
 
 split :: (a -> Bool) -> [a] -> [[a]]
 split _ [] = []
@@ -303,9 +314,6 @@ isMimeType s =
 footnoteID :: Int -> String
 footnoteID i = "n" ++ show i
 
-linkID :: Int -> String
-linkID i = "l" ++ show i
-
 -- | Convert a block-level Pandoc's element to FictionBook XML representation.
 blockToXml :: PandocMonad m => Block -> FBM m [Content]
 blockToXml (Plain ss) = cMapM toXml ss  -- FIXME: can lead to malformed FB2
@@ -357,10 +365,7 @@ blockToXml h@Header{} = do
   -- should not occur after hierarchicalize, except inside lists/blockquotes
   report $ BlockNotRendered h
   return []
-blockToXml HorizontalRule = return
-                            [ el "empty-line" ()
-                            , el "p" (txt (replicate 10 '—'))
-                            , el "empty-line" () ]
+blockToXml HorizontalRule = return [ el "empty-line" () ]
 blockToXml (Table caption aligns _ headers rows) = do
     hd <- mkrow "th" headers aligns
     bd <- mapM (\r -> mkrow "td" r aligns) rows
@@ -390,8 +395,13 @@ plainToPara [] = []
 plainToPara (Plain inlines : rest) =
     Para inlines : plainToPara rest
 plainToPara (Para inlines : rest) =
-    Para inlines : Plain [LineBreak] : plainToPara rest
+    Para inlines : HorizontalRule : plainToPara rest -- HorizontalRule will be converted to <empty-line />
 plainToPara (p:rest) = p : plainToPara rest
+
+-- Replace plain text with paragraphs
+unPlain :: Block -> Block
+unPlain (Plain inlines) = Para inlines
+unPlain x = x
 
 -- Simulate increased indentation level. Will not really work
 -- for multi-line paragraphs.
@@ -441,29 +451,15 @@ toXml (Quoted DoubleQuote ss) = do
 toXml (Cite _ ss) = cMapM toXml ss  -- FIXME: support citation styles
 toXml (Code _ s) = return [el "code" s]
 toXml Space = return [txt " "]
-toXml SoftBreak = return [txt " "]
-toXml LineBreak = return [el "empty-line" ()]
+toXml SoftBreak = return [txt "\n"]
+toXml LineBreak = return [txt "\n"]
 toXml (Math _ formula) = insertMath InlineImage formula
 toXml il@(RawInline _ _) = do
   report $ InlineNotRendered il
   return []  -- raw TeX and raw HTML are suppressed
-toXml (Link _ text (url,ttl)) = do
-  fns <- footnotes `liftM` get
-  let n = 1 + length fns
-  let ln_id = linkID n
-  let ln_ref = list . el "sup" . txt $ "[" ++ show n ++ "]"
+toXml (Link _ text (url,_)) = do
   ln_text <- cMapM toXml text
-  let ln_desc =
-          let ttl' = dropWhile isSpace ttl
-          in if null ttl'
-             then list . el "p" $ el "code" url
-             else list . el "p" $ [ txt (ttl' ++ ": "), el "code" url ]
-  modify (\s -> s { footnotes = (n, ln_id, ln_desc) : fns })
-  return $ ln_text ++
-         [ el "a"
-                  ( [ attr ("l","href") ('#':ln_id)
-                    , uattr "type" "note" ]
-                  , ln_ref) ]
+  return [ el "a" ( [ attr ("l","href") url ], ln_text) ]
 toXml img@Image{} = insertImage InlineImage img
 toXml (Note bs) = do
   fns <- footnotes `liftM` get

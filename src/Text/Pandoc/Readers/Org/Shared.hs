@@ -1,6 +1,7 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-
-Copyright (C) 2014-2017 Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
+Copyright (C) 2014-2018 Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -19,7 +20,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 {- |
    Module      : Text.Pandoc.Readers.Org.Shared
-   Copyright   : Copyright (C) 2014-2017 Albert Krewinkel
+   Copyright   : Copyright (C) 2014-2018 Albert Krewinkel
    License     : GNU GPL, version 2 or above
 
    Maintainer  : Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
@@ -33,18 +34,20 @@ module Text.Pandoc.Readers.Org.Shared
   , translateLang
   ) where
 
+import Prelude
 import Data.Char (isAlphaNum)
-import Data.List (isPrefixOf, isSuffixOf)
+import Data.List (isPrefixOf)
+import System.FilePath (isValid, takeExtension)
 
 
 -- | Check whether the given string looks like the path to of URL of an image.
 isImageFilename :: String -> Bool
-isImageFilename filename =
-  any (\x -> ('.':x)  `isSuffixOf` filename) imageExtensions &&
-  (any (\x -> (x ++ "://") `isPrefixOf` filename) protocols ||
-   ':' `notElem` filename)
+isImageFilename fp = hasImageExtension && (isValid fp || isKnownProtocolUri)
  where
-   imageExtensions = [ "jpeg" , "jpg" , "png" , "gif" , "svg" ]
+   hasImageExtension = takeExtension fp `elem` imageExtensions
+   isKnownProtocolUri = any (\x -> (x ++ "://") `isPrefixOf` fp) protocols
+
+   imageExtensions = [ ".jpeg", ".jpg", ".png", ".gif", ".svg" ]
    protocols = [ "file", "http", "https" ]
 
 -- | Cleanup and canonicalize a string describing a link.  Return @Nothing@ if

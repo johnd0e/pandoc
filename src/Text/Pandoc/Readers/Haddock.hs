@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE CPP #-}
 {- |
    Module      : Text.Pandoc.Readers.Haddock
@@ -14,13 +15,13 @@ module Text.Pandoc.Readers.Haddock
     ( readHaddock
     ) where
 
+import Prelude
 import Control.Monad.Except (throwError)
 import Data.List (intersperse, stripPrefix)
 import Data.Maybe (fromMaybe)
-import Data.Monoid ((<>))
 import Data.Text (Text, unpack)
 import Documentation.Haddock.Parser
-import Documentation.Haddock.Types
+import Documentation.Haddock.Types as H
 import Text.Pandoc.Builder (Blocks, Inlines)
 import qualified Text.Pandoc.Builder as B
 import Text.Pandoc.Class (PandocMonad)
@@ -43,11 +44,7 @@ readHaddockEither :: ReaderOptions -- ^ Reader options
                   -> String        -- ^ String to parse
                   -> Either PandocError Pandoc
 readHaddockEither _opts =
-#if MIN_VERSION_haddock_library(1,2,0)
-  Right . B.doc . docHToBlocks . _doc . parseParas
-#else
-  Right .  B.doc . docHToBlocks . parseParas
-#endif
+  Right . B.doc . docHToBlocks . _doc . parseParas Nothing
 
 docHToBlocks :: DocH String Identifier -> Blocks
 docHToBlocks d' =
@@ -67,10 +64,8 @@ docHToBlocks d' =
     DocEmphasis _ -> inlineFallback
     DocMonospaced _ -> inlineFallback
     DocBold _ -> inlineFallback
-#if MIN_VERSION_haddock_library(1,4,0)
     DocMathInline _ -> inlineFallback
     DocMathDisplay _ -> inlineFallback
-#endif
     DocHeader h -> B.header (headerLevel h)
                            (docHToInlines False $ headerTitle h)
     DocUnorderedList items -> B.bulletList (map docHToBlocks items)
@@ -86,6 +81,18 @@ docHToBlocks d' =
     DocProperty s -> B.codeBlockWith ("",["property","haskell"],[]) (trim s)
     DocExamples es -> mconcat $ map (\e ->
        makeExample ">>>" (exampleExpression e) (exampleResult e)) es
+    DocTable H.Table{ tableHeaderRows = headerRows
+                    , tableBodyRows = bodyRows
+                    }
+      -> let toCells = map (docHToBlocks . tableCellContents) . tableRowCells
+             (header, body) =
+               if null headerRows
+                  then ([], map toCells bodyRows)
+                  else (toCells (head headerRows),
+                        map toCells (tail headerRows ++ bodyRows))
+             colspecs = replicate (maximum (map length body))
+                             (AlignDefault, 0.0)
+         in  B.table mempty colspecs header body
 
   where inlineFallback = B.plain $ docHToInlines False d'
         consolidatePlains = B.fromList . consolidatePlains' . B.toList
@@ -118,10 +125,8 @@ docHToInlines isCode d' =
     DocMonospaced (DocString s) -> B.code s
     DocMonospaced d -> docHToInlines True d
     DocBold d -> B.strong (docHToInlines isCode d)
-#if MIN_VERSION_haddock_library(1,4,0)
     DocMathInline s -> B.math s
     DocMathDisplay s -> B.displayMath s
-#endif
     DocHeader _ -> mempty
     DocUnorderedList _ -> mempty
     DocOrderedList _ -> mempty
@@ -134,6 +139,7 @@ docHToInlines isCode d' =
     DocAName s -> B.spanWith (s,["anchor"],[]) mempty
     DocProperty _ -> mempty
     DocExamples _ -> mempty
+    DocTable _ -> mempty
 
 -- | Create an 'Example', stripping superfluous characters as appropriate
 makeExample :: String -> String -> [String] -> Blocks

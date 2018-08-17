@@ -1,6 +1,8 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Tests.Readers.Txt2Tags (tests) where
 
+import Prelude
 import Data.List (intersperse)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -30,11 +32,11 @@ simpleTable' :: Int
              -> [Blocks]
              -> [[Blocks]]
              -> Blocks
-simpleTable' n = table "" (take n $ repeat (AlignCenter, 0.0))
+simpleTable' n = table "" (replicate n (AlignCenter, 0.0))
 
 tests :: [TestTree]
 tests =
-  [ testGroup "Inlines" $
+  [ testGroup "Inlines"
       [ "Plain String" =:
           "Hello, World" =?>
           para (spcSep [ "Hello,", "World" ])
@@ -96,9 +98,12 @@ tests =
       , "Autolink" =:
           "http://www.google.com" =?>
             para (link "http://www.google.com" "" (str "http://www.google.com"))
-      , "Image" =:
+      , "JPEG Image" =:
           "[image.jpg]" =?>
             para (image "image.jpg" "" mempty)
+      , "PNG Image" =:
+          "[image.png]" =?>
+            para (image "image.png" "" mempty)
 
       , "Link" =:
           "[title http://google.com]" =?>
@@ -114,7 +119,7 @@ tests =
 
       ]
 
-  , testGroup "Basic Blocks" $
+  , testGroup "Basic Blocks"
       ["Paragraph, lines grouped together" =:
           "A paragraph\n A blank line ends the \n current paragraph\n"
             =?> para "A paragraph\n A blank line ends the\n current paragraph"
@@ -140,7 +145,7 @@ tests =
 
       , "Header with label" =:
           "= header =[label]" =?>
-            headerWith ("label", [], []) 1 ("header")
+            headerWith ("label", [], []) 1 "header"
 
       , "Invalid header, mismatched delimiters" =:
           "== header =" =?>
@@ -197,7 +202,7 @@ tests =
 
     ]
 
-  , testGroup "Lists" $
+  , testGroup "Lists"
       [ "Simple Bullet Lists" =:
           ("- Item1\n" <>
            "- Item2\n") =?>

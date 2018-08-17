@@ -1,13 +1,12 @@
-{-# LANGUAGE FlexibleContexts     #-}
-{-# LANGUAGE FlexibleInstances    #-}
-{-# LANGUAGE OverloadedStrings    #-}
-{-# LANGUAGE RelaxedPolyRec       #-}
-{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE FlexibleContexts  #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RelaxedPolyRec    #-}
 
 {- |
    Module      : Text.Pandoc.Readers.TikiWiki
    Copyright   : Copyright (C) 2017 Robin Lee Powell
-   License     : GPLv2
+   License     : GNU GPL, version 2 or above
 
    Maintainer  : Robin Lee Powell <robinleepowell@gmail.com>
    Stability   : alpha
@@ -19,9 +18,11 @@ Conversion of TikiWiki text to 'Pandoc' document.
 module Text.Pandoc.Readers.TikiWiki ( readTikiWiki
                                     ) where
 
+import Prelude
 import Control.Monad
 import Control.Monad.Except (throwError)
 import qualified Data.Foldable as F
+import Data.List (dropWhileEnd)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -166,9 +167,9 @@ table = try $ do
   -- return $ B.simpleTable (headers rows) $ trace ("rows: " ++ (show rows)) rows
   return $B.simpleTable (headers rows) rows
   where
-    -- The headers are as many empty srings as the number of columns
+    -- The headers are as many empty strings as the number of columns
     -- in the first row
-    headers rows = map (B.plain . B.str) $replicate (length $ rows !! 0) ""
+    headers rows = map (B.plain . B.str) $replicate (length $ head rows) ""
 
 para :: PandocMonad m => TikiWikiParser m B.Blocks
 para =  fmap (result . mconcat) ( many1Till inline endOfParaElement)
@@ -238,8 +239,8 @@ fixListNesting [first] = [recurseOnList first]
 fixListNesting (first:second:rest) =
   let secondBlock = head $ B.toList second in
     case secondBlock of
-      BulletList _ -> fixListNesting $ (mappend (recurseOnList first) (recurseOnList second)) : rest
-      OrderedList _ _ -> fixListNesting $ (mappend (recurseOnList first) (recurseOnList second)) : rest
+      BulletList _ -> fixListNesting $ mappend (recurseOnList first) (recurseOnList second) : rest
+      OrderedList _ _ -> fixListNesting $ mappend (recurseOnList first) (recurseOnList second) : rest
       _ -> recurseOnList first : fixListNesting (second:rest)
 
 -- This function walks the Block structure for fixListNesting,
@@ -285,7 +286,7 @@ spanFoldUpList ln (first:rest) =
 -- level and of the same type.
 splitListNesting :: ListNesting -> (ListNesting, B.Blocks) -> Bool
 splitListNesting ln1 (ln2, _)
-  | (lnnest ln1) < (lnnest ln2) =
+  | lnnest ln1 < lnnest ln2 =
   True
   | ln1 == ln2 =
   True
@@ -319,7 +320,7 @@ listItem = choice [
 bulletItem :: PandocMonad m => TikiWikiParser m (ListNesting, B.Blocks)
 bulletItem = try $ do
   prefix <- many1 $ char '*'
-  many1 $ char ' '
+  many $ char ' '
   content <- listItemLine (length prefix)
   return (LN Bullet (length prefix), B.plain content)
 
@@ -331,7 +332,7 @@ bulletItem = try $ do
 numberedItem :: PandocMonad m => TikiWikiParser m (ListNesting, B.Blocks)
 numberedItem = try $ do
   prefix <- many1 $ char '#'
-  many1 $ char ' '
+  many $ char ' '
   content <- listItemLine (length prefix)
   return (LN Numbered (length prefix), B.plain content)
 
@@ -341,12 +342,12 @@ listItemLine nest = lineContent >>= parseContent
     lineContent = do
       content <- anyLine
       continuation <- optionMaybe listContinuation
-      return $ filterSpaces content ++ "\n" ++ maybe "" id continuation
+      return $ filterSpaces content ++ "\n" ++ Data.Maybe.fromMaybe "" continuation
     filterSpaces = reverse . dropWhile (== ' ') . reverse
     listContinuation = string (replicate nest '+') >> lineContent
     parseContent x = do
       parsed <- parseFromString (many1 inline) x
-      return $ mconcat parsed
+      return $ mconcat $ dropWhileEnd (== B.space) parsed
 
 -- Turn the CODE macro attributes into Pandoc code block attributes.
 mungeAttrs :: [(String, String)] -> (String, [String], [(String, String)])
@@ -410,7 +411,7 @@ inline = choice [ whitespace
                 ] <?> "inline"
 
 whitespace :: PandocMonad m => TikiWikiParser m B.Inlines
-whitespace = (lb <|> regsp)
+whitespace = lb <|> regsp
   where lb = try $ skipMany spaceChar >> linebreak >> return B.space
         regsp = try $ skipMany1 spaceChar >> return B.space
 
@@ -501,7 +502,7 @@ escapedChar = try $ do
   string "~"
   inner <- many1 $ oneOf "0123456789"
   string "~"
-  return $B.str [(toEnum (read inner :: Int)) :: Char]
+  return $B.str [toEnum (read inner :: Int) :: Char]
 
 -- UNSUPPORTED, as there doesn't seem to be any facility in calibre
 -- for this

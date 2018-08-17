@@ -1,8 +1,9 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE DeriveGeneric      #-}
 {-# LANGUAGE TemplateHaskell    #-}
 {-
-Copyright (C) 2012-2017 John MacFarlane <jgm@berkeley.edu>
+Copyright (C) 2012-2018 John MacFarlane <jgm@berkeley.edu>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -21,7 +22,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 {- |
    Module      : Text.Pandoc.Options
-   Copyright   : Copyright (C) 2012-2017 John MacFarlane
+   Copyright   : Copyright (C) 2012-2018 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -46,6 +47,7 @@ module Text.Pandoc.Options ( module Text.Pandoc.Extensions
                            , def
                            , isEnabled
                            ) where
+import Prelude
 import Data.Aeson (defaultOptions)
 import Data.Aeson.TH (deriveJSON)
 import Data.Data (Data)
@@ -104,10 +106,8 @@ defaultAbbrevs = Set.fromList
 data EPUBVersion = EPUB2 | EPUB3 deriving (Eq, Show, Read, Data, Typeable, Generic)
 
 data HTMLMathMethod = PlainMath
-                    | LaTeXMathML (Maybe String)  -- url of LaTeXMathML.js
-                    | JsMath (Maybe String)       -- url of jsMath load script
-                    | GladTeX
                     | WebTeX String               -- url of TeX->image script.
+                    | GladTeX
                     | MathML
                     | MathJax String              -- url of MathJax.js
                     | KaTeX String                -- url of KaTeX files

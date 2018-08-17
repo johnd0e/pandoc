@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE Arrows          #-}
 {-# LANGUAGE TupleSections   #-}
 {-# LANGUAGE GADTs           #-}
@@ -67,6 +68,7 @@ module Text.Pandoc.Readers.Odt.Generic.XMLConverter
 , matchContent
 ) where
 
+import Prelude
 import           Control.Applicative  hiding ( liftA, liftA2 )
 import           Control.Monad               ( MonadPlus )
 import           Control.Arrow
@@ -259,7 +261,7 @@ convertingExtraState v a = withSubStateF setVAsExtraState modifyWithA
 -- The resulting converter even behaves like an identity converter on the
 -- value level.
 --
--- Aequivalent to
+-- Equivalent to
 --
 -- > \v x a -> convertingExtraState v (returnV x >>> a)
 --

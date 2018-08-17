@@ -1,5 +1,6 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-
-Copyright (C) 2010-2017 John MacFarlane <jgm@berkeley.edu>
+Copyright (C) 2010-2018 John MacFarlane <jgm@berkeley.edu>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -18,7 +19,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 {- |
    Module      : Text.Pandoc.UUID
-   Copyright   : Copyright (C) 2010-2017 John MacFarlane
+   Copyright   : Copyright (C) 2010-2018 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -31,6 +32,7 @@ in RFC4122. See http://tools.ietf.org/html/rfc4122
 
 module Text.Pandoc.UUID ( UUID(..), getRandomUUID, getUUID ) where
 
+import Prelude
 import Data.Bits (clearBit, setBit)
 import Data.Word
 import System.Random (RandomGen, getStdGen, randoms)
@@ -65,13 +67,14 @@ instance Show UUID where
 
 getUUID :: RandomGen g => g -> UUID
 getUUID gen =
-  let [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p] = take 16 $ randoms gen :: [Word8]
-  -- set variant
-      i' = i `setBit` 7 `clearBit` 6
-  -- set version (0100 for random)
-      g' = g `clearBit` 7 `setBit` 6 `clearBit` 5 `clearBit` 4
-  in
-    UUID a b c d e f g' h i' j k l m n o p
+  case take 16 (randoms gen :: [Word8]) of
+       [a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p] ->
+         -- set variant
+         let i' = i `setBit` 7 `clearBit` 6
+         -- set version (0100 for random)
+             g' = g `clearBit` 7 `setBit` 6 `clearBit` 5 `clearBit` 4
+         in  UUID a b c d e f g' h i' j k l m n o p
+       _ -> error "not enough random numbers for UUID" -- should not happen
 
 getRandomUUID :: IO UUID
 getRandomUUID = getUUID <$> getStdGen

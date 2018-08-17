@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE CPP                   #-}
 {-# LANGUAGE DeriveDataTypeable    #-}
 {-# LANGUAGE FlexibleContexts      #-}
@@ -6,7 +7,7 @@
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE ViewPatterns          #-}
 {-
-Copyright (C) 2006-2017 John MacFarlane <jgm@berkeley.edu>
+Copyright (C) 2006-2018 John MacFarlane <jgm@berkeley.edu>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -25,7 +26,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 {- |
    Module      : Text.Pandoc.Shared
-   Copyright   : Copyright (C) 2006-2017 John MacFarlane
+   Copyright   : Copyright (C) 2006-2018 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -83,6 +84,7 @@ module Text.Pandoc.Shared (
                      -- * File handling
                      inDirectory,
                      collapseFilePath,
+                     uriPathToPath,
                      filteredFilesFromArchive,
                      -- * URI handling
                      schemes,
@@ -92,6 +94,8 @@ module Text.Pandoc.Shared (
                      -- * for squashing blocks
                      blocksToInlines,
                      blocksToInlines',
+                     blocksToInlinesWithSep,
+                     defaultBlocksSeparator,
                      -- * Safe read
                      safeRead,
                      -- * Temp directory
@@ -100,6 +104,7 @@ module Text.Pandoc.Shared (
                      pandocVersion
                     ) where
 
+import Prelude
 import Codec.Archive.Zip
 import qualified Control.Exception as E
 import Control.Monad (MonadPlus (..), msum, unless)
@@ -111,7 +116,6 @@ import Data.Data (Data, Typeable)
 import Data.List (find, intercalate, intersperse, stripPrefix)
 import qualified Data.Map as M
 import Data.Maybe (mapMaybe)
-import Data.Monoid ((<>))
 import Data.Sequence (ViewL (..), ViewR (..), viewl, viewr)
 import qualified Data.Set as Set
 import qualified Data.Text as T
@@ -126,7 +130,7 @@ import Text.HTML.TagSoup (RenderOptions (..), Tag (..), renderOptions,
                           renderTagsOptions)
 import Text.Pandoc.Builder (Blocks, Inlines, ToMetaValue (..))
 import qualified Text.Pandoc.Builder as B
-import Text.Pandoc.Compat.Time
+import Data.Time
 import Text.Pandoc.Definition
 import Text.Pandoc.Generic (bottomUp)
 import Text.Pandoc.Pretty (charWidth)
@@ -286,12 +290,7 @@ normalizeDate s = fmap (formatTime defaultTimeLocale "%F")
   where rejectBadYear day = case toGregorian day of
           (y, _, _) | y >= 1601 && y <= 9999 -> Just day
           _         -> Nothing
-        parsetimeWith =
-#if MIN_VERSION_time(1,5,0)
-             parseTimeM True defaultTimeLocale
-#else
-             parseTime defaultTimeLocale
-#endif
+        parsetimeWith = parseTimeM True defaultTimeLocale
         formats = ["%x","%m/%d/%Y", "%D","%F", "%d %b %Y",
                     "%e %B %Y", "%b. %e, %Y", "%B %e, %Y",
                     "%Y%m%d", "%Y%m", "%Y"]
@@ -447,7 +446,7 @@ instance Walkable Inline Element where
     elts' <- walkM f elts
     return $ Sec lev nums attr ils' elts'
   query f (Blk x)              = query f x
-  query f (Sec _ _ _ ils elts) = query f ils <> query f elts
+  query f (Sec _ _ _ ils elts) = query f ils `mappend` query f elts
 
 instance Walkable Block Element where
   walk f (Blk x) = Blk (walk f x)
@@ -458,7 +457,7 @@ instance Walkable Block Element where
     elts' <- walkM f elts
     return $ Sec lev nums attr ils' elts'
   query f (Blk x)              = query f x
-  query f (Sec _ _ _ ils elts) = query f ils <> query f elts
+  query f (Sec _ _ _ ils elts) = query f ils `mappend` query f elts
 
 
 -- | Convert Pandoc inline list to plain text identifier.  HTML
@@ -494,7 +493,7 @@ hierarchicalizeWithIds (Header level attr@(_,classes,_) title':xs) = do
   return $ Sec level newnum attr title' sectionContents' : rest'
 hierarchicalizeWithIds (Div ("",["references"],[])
                          (Header level (ident,classes,kvs) title' : xs):ys) =
-  hierarchicalizeWithIds (Header level (ident,("references":classes),kvs)
+  hierarchicalizeWithIds (Header level (ident,"references":classes,kvs)
                            title' : (xs ++ ys))
 hierarchicalizeWithIds (x:rest) = do
   rest' <- hierarchicalizeWithIds rest
@@ -639,6 +638,19 @@ collapseFilePath = Posix.joinPath . reverse . foldl go [] . splitDirectories
     isSingleton _   = Nothing
     checkPathSeperator = fmap isPathSeparator . isSingleton
 
+-- Convert the path part of a file: URI to a regular path.
+-- On windows, @/c:/foo@ should be @c:/foo@.
+-- On linux, @/foo@ should be @/foo@.
+uriPathToPath :: String -> FilePath
+uriPathToPath path =
+#ifdef _WINDOWS
+  case path of
+    '/':ps -> ps
+    ps     -> ps
+#else
+  path
+#endif
+
 --
 -- File selection from the archive
 --
@@ -702,7 +714,7 @@ schemes = Set.fromList
   , "ws", "wss", "wtai", "wyciwyg", "xcon", "xcon-userid", "xfire"
   , "xmlrpc.beep", "xmlrpc.beeps", "xmpp", "xri", "ymsgr", "z39.50", "z39.50r"
   , "z39.50s"
-  -- Inofficial schemes
+  -- Unofficial schemes
   , "doi", "isbn", "javascript", "pmid"
   ]
 
@@ -747,11 +759,18 @@ blocksToInlinesWithSep sep =
   mconcat . intersperse sep . map blockToInlines
 
 blocksToInlines' :: [Block] -> Inlines
-blocksToInlines' = blocksToInlinesWithSep parSep
-  where parSep = B.space <> B.str "¶" <> B.space
+blocksToInlines' = blocksToInlinesWithSep defaultBlocksSeparator
 
 blocksToInlines :: [Block] -> [Inline]
 blocksToInlines = B.toList . blocksToInlines'
+
+-- | Inline elements used to separate blocks when squashing blocks into
+-- inlines.
+defaultBlocksSeparator :: Inlines
+defaultBlocksSeparator =
+  -- This is used in the pandoc.utils.blocks_to_inlines function. Docs
+  -- there should be updated if this is changed.
+  B.space <> B.str "¶" <> B.space
 
 
 --

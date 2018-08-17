@@ -1,6 +1,7 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-
-Copyright (C) 2014-2017 Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
+Copyright (C) 2014-2018 Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -19,7 +20,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 {- |
    Module      : Text.Pandoc.Readers.Org.Inlines
-   Copyright   : Copyright (C) 2014-2017 Albert Krewinkel
+   Copyright   : Copyright (C) 2014-2018 Albert Krewinkel
    License     : GNU GPL, version 2 or above
 
    Maintainer  : Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
@@ -33,6 +34,7 @@ module Text.Pandoc.Readers.Org.Inlines
   , linkTarget
   ) where
 
+import Prelude
 import Text.Pandoc.Readers.Org.BlockStarts (endOfBlock, noteMarker)
 import Text.Pandoc.Readers.Org.ParserState
 import Text.Pandoc.Readers.Org.Parsing
@@ -55,9 +57,6 @@ import Data.Char (isAlphaNum, isSpace)
 import Data.List (intersperse)
 import qualified Data.Map as M
 import Data.Maybe (fromMaybe)
-import Data.Monoid ((<>))
-import Data.Traversable (sequence)
-import Prelude hiding (sequence)
 
 --
 -- Functions acting on the parser state
@@ -511,7 +510,7 @@ anchor =  try $ do
                      <* string ">>"
                      <* skipSpaces
 
--- | Replace every char but [a-zA-Z0-9_.-:] with a hypen '-'.  This mirrors
+-- | Replace every char but [a-zA-Z0-9_.-:] with a hyphen '-'.  This mirrors
 -- the org function @org-export-solidify-link-text@.
 
 solidify :: String -> String
@@ -603,6 +602,8 @@ updatePositions :: PandocMonad m
                 => Char
                 -> OrgParser m Char
 updatePositions c = do
+  st <- getState
+  let emphasisPreChars = orgStateEmphasisPreChars st
   when (c `elem` emphasisPreChars) updateLastPreCharPos
   when (c `elem` emphasisForbiddenBorderChars) updateLastForbiddenCharPos
   return c
@@ -681,8 +682,10 @@ emphasisEnd c = try $ do
   updateLastStrPos
   popInlineCharStack
   return c
- where acceptablePostChars =
-           surroundingEmphasisChar >>= \x -> oneOf (x ++ emphasisPostChars)
+ where
+  acceptablePostChars = do
+    emphasisPostChars <- orgStateEmphasisPostChars <$> getState
+    surroundingEmphasisChar >>= \x -> oneOf (x ++ emphasisPostChars)
 
 mathStart :: PandocMonad m => Char -> OrgParser m Char
 mathStart c = try $
@@ -733,14 +736,6 @@ many1TillNOrLessNewlines n p end = try $
 -- Org allows customization of the way it reads emphasis.  We use the defaults
 -- here (see, e.g., the Emacs Lisp variable `org-emphasis-regexp-components`
 -- for details).
-
--- | Chars allowed to occur before emphasis (spaces and newlines are ok, too)
-emphasisPreChars :: [Char]
-emphasisPreChars = "-\t ('\"{"
-
--- | Chars allowed at after emphasis
-emphasisPostChars :: [Char]
-emphasisPostChars = "-\t\n .,:!?;'\")}["
 
 -- | Chars not allowed at the (inner) border of emphasis
 emphasisForbiddenBorderChars :: [Char]

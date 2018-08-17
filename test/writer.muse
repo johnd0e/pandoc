@@ -79,7 +79,7 @@ nested
 </quote>
 </quote>
 
-This should not be a block quote: 2 <verbatim>></verbatim> 1.
+This should not be a block quote: 2 > 1.
 
 And a following paragraph.
 
@@ -224,9 +224,9 @@ Same thing but with paragraphs:
     with a continuation
 
     iv. sublist with roman numerals, starting with 4
-    v.  more items
-        A. a subsublist
-        B. a subsublist
+    v. more items
+       A. a subsublist
+       B. a subsublist
 
 Nesting:
 
@@ -287,24 +287,21 @@ Multiple blocks with italics:
 Multiple definitions, tight:
 
  apple :: red fruit
-          computer
+       :: computer
  orange :: orange fruit
-           bank
+        :: bank
 
 Multiple definitions, loose:
 
  apple :: red fruit
-
-          computer
+       :: computer
  orange :: orange fruit
-
-           bank
+        :: bank
 
 Blank line after term, indented marker, alternate markers:
 
  apple :: red fruit
-
-          computer
+       :: computer
  orange :: orange fruit
 
            1. sublist
@@ -495,16 +492,16 @@ spaces: a^b c^d, a~b c~d.
 
 * Smart quotes, ellipses, dashes
 
-"Hello," said the spider. "'Shelob' is my name."
+“Hello,” said the spider. “‘Shelob’ is my name.”
 
-'A', 'B', and 'C' are letters.
+‘A’, ‘B’, and ‘C’ are letters.
 
-'Oak,' 'elm,' and 'beech' are names of trees. So is 'pine.'
+‘Oak,’ ‘elm,’ and ‘beech’ are names of trees. So is ‘pine.’
 
-'He said, "I want to go."' Were you alive in the 70’s?
+‘He said, “I want to go.”’ Were you alive in the 70’s?
 
-Here is some quoted '<code>code</code>' and a
-"[[http://example.com/?foo=1&bar=2][quoted link]]".
+Here is some quoted ‘<code>code</code>’ and a
+“[[http://example.com/?foo=1&bar=2][quoted link]]”.
 
 Some dashes: one—two — three—four — five.
 
@@ -517,27 +514,27 @@ Ellipses…and…and….
 * LaTeX
 
  - <literal style="tex">\cite[22-23]{smith.1899}</literal>
- - 2 + 2 <verbatim>=</verbatim> 4
+ - <verbatim>2 + 2 = 4</verbatim>
  - <em>x</em> ∈ <em>y</em>
  - <em>α</em> ∧ <em>ω</em>
  - 223
  - <em>p</em>-Tree
  - Here’s some display math:
-   <verse><verbatim>$$\frac{d}{dx}f(x)=\lim_{h\to 0}\frac{f(x+h)-f(x)}{h}$$</verbatim></verse>
+   <verbatim>$$\frac{d}{dx}f(x)=\lim_{h\to 0}\frac{f(x+h)-f(x)}{h}$$</verbatim>
  - Here’s one that has a line break in it:
    <em>α</em> + <em>ω</em> × <em>x</em><sup>2</sup>.
 
 These shouldn’t be math:
 
  - To get the famous equation, write <code>$e = mc^2$</code>.
- - $22,000 is a <em>lot</em> of money. So is $34,000. (It worked if "lot" is
+ - $22,000 is a <em>lot</em> of money. So is $34,000. (It worked if “lot” is
    emphasized.)
  - Shoes ($20) and socks ($5).
  - Escaped <code>$</code>: $73 <em>this should be emphasized</em> 23$.
 
 Here’s a LaTeX table:
 
-<literal style="latex">
+<literal style="tex">
 \begin{tabular}{|l|l|}\hline
 Animal & Number \\ \hline
 Dog    & 2      \\
@@ -565,7 +562,7 @@ This & that.
 
 4 <verbatim><</verbatim> 5.
 
-6 <verbatim>></verbatim> 5.
+6 > 5.
 
 Backslash: \
 
@@ -579,15 +576,15 @@ Left brace: {
 
 Right brace: }
 
-Left bracket: <verbatim>[</verbatim>
+Left bracket: [
 
-Right bracket: <verbatim>]</verbatim>
+Right bracket: ]
 
 Left paren: (
 
 Right paren: )
 
-Greater-than: <verbatim>></verbatim>
+Greater-than: >
 
 Hash: <verbatim>#</verbatim>
 
@@ -637,7 +634,7 @@ Indented [[/url][twice]].
 
 Indented [[/url][thrice]].
 
-This should <verbatim>[not][]</verbatim> be a link.
+This should [not][] be a link.
 
 <example>
 [not]: /url
@@ -682,7 +679,7 @@ or here: <http://example.com/>
 
 * Images
 
-From "Voyage dans la Lune" by Georges Melies (1902):
+From “Voyage dans la Lune” by Georges Melies (1902):
 
 [[lalune.jpg][Voyage dans la Lune]]
 
@@ -693,8 +690,8 @@ Here is a movie [[movie.jpg][movie]] icon.
 * Footnotes
 
 Here is a footnote reference,[1] and another.[2] This should <em>not</em> be a
-footnote reference, because it contains a <verbatim>space.[^my</verbatim>
-<verbatim>note]</verbatim> Here is an inline note.[3]
+footnote reference, because it contains a space.[^my note] Here is an inline
+note.[3]
 
 <quote>
 Notes can go in quotes.[4]
@@ -721,7 +718,7 @@ This paragraph should not be part of the note, as it is not indented.
 
 [3] This is <em>easier</em> to type. Inline notes may contain
     [[http://google.com][links]] and <code>]</code> verbatim characters, as
-    well as <verbatim>[bracketed</verbatim> <verbatim>text].</verbatim>
+    well as [bracketed text].
 
 [4] In quote.
 

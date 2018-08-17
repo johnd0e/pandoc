@@ -1,5 +1,6 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-
-Copyright (C) 2014-2017 Jesse Rosenthal <jrosenthal@jhu.edu>
+Copyright (C) 2014-2018 Jesse Rosenthal <jrosenthal@jhu.edu>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -18,7 +19,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 {- |
    Module      : Text.Pandoc.Readers.Docx.Lists
-   Copyright   : Copyright (C) 2014-2017 Jesse Rosenthal
+   Copyright   : Copyright (C) 2014-2018 Jesse Rosenthal
    License     : GNU GPL, version 2 or above
 
    Maintainer  : Jesse Rosenthal <jrosenthal@jhu.edu>
@@ -33,6 +34,7 @@ module Text.Pandoc.Readers.Docx.Lists ( blocksToBullets
                                       , listParagraphDivs
                                       ) where
 
+import Prelude
 import Data.List
 import Data.Maybe
 import Text.Pandoc.Generic (bottomUp)
@@ -44,14 +46,14 @@ isListItem (Div (_, classes, _) _) | "list-item" `elem` classes = True
 isListItem _                       = False
 
 getLevel :: Block -> Maybe Integer
-getLevel (Div (_, _, kvs) _) =  fmap read $ lookup "level" kvs
+getLevel (Div (_, _, kvs) _) =  read <$> lookup "level" kvs
 getLevel _                   = Nothing
 
 getLevelN :: Block -> Integer
 getLevelN b = fromMaybe (-1) (getLevel b)
 
 getNumId :: Block -> Maybe Integer
-getNumId (Div (_, _, kvs) _) =  fmap read $ lookup "num-id" kvs
+getNumId (Div (_, _, kvs) _) =  read <$> lookup "num-id" kvs
 getNumId _                   = Nothing
 
 getNumIdN :: Block -> Integer
@@ -140,8 +142,8 @@ flatToBullets' num xs@(b : elems)
         (children, remaining) =
           span
           (\b' ->
-            (getLevelN b') > bLevel ||
-             ((getLevelN b') == bLevel && (getNumIdN b') == bNumId))
+            getLevelN b' > bLevel ||
+             (getLevelN b' == bLevel && getNumIdN b' == bNumId))
           xs
     in
      case getListType b of
@@ -181,14 +183,13 @@ blocksToDefinitions' defAcc acc
         pair = if remainingAttr2 == ("", [], []) then (concatMap plainParaInlines blks1, [blks2]) else (concatMap plainParaInlines blks1, [[Div remainingAttr2 blks2]])
     in
      blocksToDefinitions' (pair : defAcc) acc blks
-blocksToDefinitions' defAcc acc
+blocksToDefinitions' ((defTerm, defItems):defs) acc
   (Div (ident2, classes2, kvs2) blks2 : blks)
-  | (not . null) defAcc && "Definition"  `elem` classes2 =
+  | "Definition"  `elem` classes2 =
     let remainingAttr2 = (ident2, delete "Definition" classes2, kvs2)
         defItems2 = case remainingAttr2 == ("", [], []) of
           True  -> blks2
           False -> [Div remainingAttr2 blks2]
-        ((defTerm, defItems):defs) = defAcc
         defAcc' = case null defItems of
           True -> (defTerm, [defItems2]) : defs
           False -> (defTerm, init defItems ++ [last defItems ++ defItems2]) : defs

@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-
 Copyright (C) 2015 Martin Linnemann <theCodingMarlin@googlemail.com>
 
@@ -31,6 +32,7 @@ typesafe Haskell namespace identifiers and unsafe "real world" namespaces.
 
 module Text.Pandoc.Readers.Odt.Generic.Namespaces where
 
+import Prelude
 import qualified Data.Map as M
 
 --
@@ -48,7 +50,7 @@ class (Eq nsID, Ord nsID) => NameSpaceID nsID where
   getNamespaceID   :: NameSpaceIRI
                       -> NameSpaceIRIs nsID
                       -> Maybe (NameSpaceIRIs nsID, nsID)
-  -- | Given a namespace id, lookup its IRI. May be overriden for performance.
+  -- | Given a namespace id, lookup its IRI. May be overridden for performance.
   getIRI           :: nsID
                       -> NameSpaceIRIs nsID
                       -> Maybe NameSpaceIRI

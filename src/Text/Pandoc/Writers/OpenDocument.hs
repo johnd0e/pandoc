@@ -1,8 +1,9 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternGuards     #-}
 {-
-Copyright (C) 2008-2017 Andrea Rossato <andrea.rossato@ing.unitn.it>
+Copyright (C) 2008-2018 Andrea Rossato <andrea.rossato@ing.unitn.it>
                         and John MacFarlane.
 
 This program is free software; you can redistribute it and/or modify
@@ -22,7 +23,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 {- |
    Module      : Text.Pandoc.Writers.OpenDocument
-   Copyright   : Copyright (C) 2008-2017 Andrea Rossato and John MacFarlane
+   Copyright   : Copyright (C) 2008-2018 Andrea Rossato and John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : Andrea Rossato <andrea.rossato@ing.unitn.it>
@@ -32,6 +33,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 Conversion of 'Pandoc' documents to OpenDocument XML.
 -}
 module Text.Pandoc.Writers.OpenDocument ( writeOpenDocument ) where
+import Prelude
 import Control.Arrow ((***), (>>>))
 import Control.Monad.State.Strict hiding (when)
 import Data.Char (chr)
@@ -173,10 +175,33 @@ inTextStyle d = do
               return $ inTags False
                   "text:span" [("text:style-name",styleName)] d
 
-inHeaderTags :: PandocMonad m => Int -> Doc -> OD m Doc
-inHeaderTags i d =
+formulaStyles :: [Doc]
+formulaStyles = [formulaStyle InlineMath, formulaStyle DisplayMath]
+
+formulaStyle :: MathType -> Doc
+formulaStyle mt = inTags False "style:style"
+  [("style:name", if mt == InlineMath then "fr1" else "fr2")
+  ,("style:family", "graphic")
+  ,("style:parent-style-name", "Formula")]
+  $ selfClosingTag "style:graphic-properties" $ if mt == InlineMath then
+                                                  [("style:vertical-pos", "middle")
+                                                  ,("style:vertical-rel", "text")]
+                                                else
+                                                  [("style:vertical-pos",   "middle")
+                                                  ,("style:vertical-rel",   "paragraph-content")
+                                                  ,("style:horizontal-pos", "center")
+                                                  ,("style:horizontal-rel", "paragraph-content")
+                                                  ,("style:wrap",           "none")]
+
+inHeaderTags :: PandocMonad m => Int -> String -> Doc -> OD m Doc
+inHeaderTags i ident d =
   return $ inTags False "text:h" [ ("text:style-name", "Heading_20_" ++ show i)
-                                 , ("text:outline-level", show i)] d
+                                 , ("text:outline-level", show i)]
+         $ if null ident
+              then d
+              else selfClosingTag "text:bookmark-start" [ ("text:name", ident) ]
+                   <> d <>
+                   selfClosingTag "text:bookmark-end" [ ("text:name", ident) ]
 
 inQuotes :: QuoteType -> Doc -> Doc
 inQuotes SingleQuote s = char '\8216' <> s <> char '\8217'
@@ -211,7 +236,7 @@ writeOpenDocument opts (Pandoc meta blocks) = do
                   meta
            b <- render' `fmap` blocksToOpenDocument opts blocks
            return (b, m)
-  let styles   = stTableStyles s ++ stParaStyles s ++
+  let styles   = stTableStyles s ++ stParaStyles s ++ formulaStyles ++
                      map snd (sortBy (flip (comparing fst)) (
                         Map.elems (stTextStyles s)))
       listStyle (n,l) = inTags True "text:list-style"
@@ -329,8 +354,9 @@ blockToOpenDocument o bs
     | LineBlock      b <- bs = blockToOpenDocument o $ linesToPara b
     | Div attr xs      <- bs = withLangFromAttr attr
                                   (blocksToOpenDocument o xs)
-    | Header     i _ b <- bs = setFirstPara >>
-                               (inHeaderTags  i =<< inlinesToOpenDocument o b)
+    | Header     i (ident,_,_) b
+                       <- bs = setFirstPara >> (inHeaderTags i ident
+                                  =<< inlinesToOpenDocument o b)
     | BlockQuote     b <- bs = setFirstPara >> mkBlockQuote b
     | DefinitionList b <- bs = setFirstPara >> defList b
     | BulletList     b <- bs = setFirstPara >> bulletListToOpenDocument o b
@@ -576,7 +602,7 @@ paraStyle attrs = do
       tight     = if t then [ ("fo:margin-top"          , "0in"    )
                             , ("fo:margin-bottom"       , "0in"    )]
                        else []
-      indent    = if (i /= 0 || b)
+      indent    = if i /= 0 || b
                       then [ ("fo:margin-left"         , indentVal)
                            , ("fo:margin-right"        , "0in"    )
                            , ("fo:text-indent"         , "0in"    )

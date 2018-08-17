@@ -1,6 +1,7 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-
-Copyright (C) 2015-2017 John MacFarlane <jgm@berkeley.edu>
+Copyright (C) 2015-2018 John MacFarlane <jgm@berkeley.edu>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -19,7 +20,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 {- |
    Module      : Text.Pandoc.Writers.CommonMark
-   Copyright   : Copyright (C) 2015-2017 John MacFarlane
+   Copyright   : Copyright (C) 2015-2018 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -32,11 +33,12 @@ CommonMark:  <http://commonmark.org>
 -}
 module Text.Pandoc.Writers.CommonMark (writeCommonMark) where
 
+import Prelude
 import CMarkGFM
 import Control.Monad.State.Strict (State, get, modify, runState)
 import Data.Foldable (foldrM)
 import Data.List (transpose)
-import Data.Monoid (Any (..), (<>))
+import Data.Monoid (Any (..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Network.HTTP (urlEncode)
@@ -114,7 +116,7 @@ blockToNodes _ (CodeBlock (_,classes,_) xs) ns = return
 blockToNodes opts (RawBlock fmt xs) ns
   | fmt == Format "html" && isEnabled Ext_raw_html opts
               = return (node (HTML_BLOCK (T.pack xs)) [] : ns)
-  | fmt == Format "latex" || fmt == Format "tex" && isEnabled Ext_raw_tex opts
+  | (fmt == Format "latex" || fmt == Format "tex") && isEnabled Ext_raw_tex opts
               = return (node (CUSTOM_BLOCK (T.pack xs) T.empty) [] : ns)
   | otherwise = return ns
 blockToNodes opts (BlockQuote bs) ns = do
@@ -302,6 +304,11 @@ inlineToNodes opts (Math mt str) =
               (node (HTML_INLINE (T.pack ("\\(" ++ str ++ "\\)"))) [] :)
             DisplayMath ->
               (node (HTML_INLINE (T.pack ("\\[" ++ str ++ "\\]"))) [] :)
+inlineToNodes opts (Span ("",["emoji"],kvs) [Str s]) = do
+  case lookup "data-emoji" kvs of
+       Just emojiname | isEnabled Ext_emoji opts ->
+            (node (TEXT (":" <> T.pack emojiname <> ":")) [] :)
+       _ -> (node (TEXT (T.pack s)) [] :)
 inlineToNodes opts (Span attr ils) =
   let nodes = inlinesToNodes opts ils
       op = tagWithAttributes opts True False "span" attr

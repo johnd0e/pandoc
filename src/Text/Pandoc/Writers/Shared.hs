@@ -1,6 +1,7 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-
-Copyright (C) 2013-2017 John MacFarlane <jgm@berkeley.edu>
+Copyright (C) 2013-2018 John MacFarlane <jgm@berkeley.edu>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -19,7 +20,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 {- |
    Module      : Text.Pandoc.Writers.Shared
-   Copyright   : Copyright (C) 2013-2017 John MacFarlane
+   Copyright   : Copyright (C) 2013-2018 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -40,8 +41,11 @@ module Text.Pandoc.Writers.Shared (
                      , fixDisplayMath
                      , unsmartify
                      , gridTable
+                     , metaValueToInlines
+                     , stripLeadingTrailingSpace
                      )
 where
+import Prelude
 import Control.Monad (zipWithM)
 import Data.Aeson (FromJSON (..), Result (..), ToJSON (..), Value (Object),
                    encode, fromJSON)
@@ -55,6 +59,7 @@ import qualified Text.Pandoc.Builder as Builder
 import Text.Pandoc.Definition
 import Text.Pandoc.Options
 import Text.Pandoc.Pretty
+import Text.Pandoc.Walk (query)
 import Text.Pandoc.UTF8 (toStringLazy)
 import Text.Pandoc.XML (escapeStringForXML)
 
@@ -238,40 +243,58 @@ gridTable :: Monad m
           -> [[[Block]]]
           -> m Doc
 gridTable opts blocksToDoc headless aligns widths headers rows = do
+  -- the number of columns will be used in case of even widths
   let numcols = maximum (length aligns : length widths :
                            map length (headers:rows))
+  -- handleGivenWidths wraps the given blocks in order for them to fit
+  -- in cells with given widths. the returned content can be
+  -- concatenated with borders and frames
   let handleGivenWidths widths' = do
         let widthsInChars' = map (
                       (\x -> if x < 1 then 1 else x) .
                       (\x -> x - 3) . floor .
                       (fromIntegral (writerColumns opts) *)
                       ) widths'
-        rawHeaders' <- zipWithM blocksToDoc
-            (map (\w -> opts{writerColumns =
-                      min (w - 2) (writerColumns opts)}) widthsInChars')
-            headers
+            -- replace page width (in columns) in the options with a
+            -- given width if smaller (adjusting by two)
+            useWidth w = opts{writerColumns = min (w - 2) (writerColumns opts)}
+            -- prepare options to use with header and row cells
+            columnOptions = map useWidth widthsInChars'
+        rawHeaders' <- zipWithM blocksToDoc columnOptions headers
         rawRows' <- mapM
-             (\cs -> zipWithM blocksToDoc
-               (map (\w -> opts{writerColumns =
-                         min (w - 2) (writerColumns opts)}) widthsInChars')
-               cs)
+             (\cs -> zipWithM blocksToDoc columnOptions cs)
              rows
         return (widthsInChars', rawHeaders', rawRows')
-  let handleZeroWidths = do
+  -- handleFullWidths tries to wrap cells to the page width or even
+  -- more in cases where `--wrap=none`. thus the content here is left
+  -- as wide as possible
+  let handleFullWidths = do
         rawHeaders' <- mapM (blocksToDoc opts) headers
         rawRows' <- mapM (mapM (blocksToDoc opts)) rows
         let numChars [] = 0
             numChars xs = maximum . map offset $ xs
         let widthsInChars' =
                 map numChars $ transpose (rawHeaders' : rawRows')
+        return (widthsInChars', rawHeaders', rawRows')
+  -- handleZeroWidths calls handleFullWidths to check whether a wide
+  -- table would fit in the page. if the produced table is too wide,
+  -- it calculates even widths and passes the content to
+  -- handleGivenWidths
+  let handleZeroWidths = do
+        (widthsInChars', rawHeaders', rawRows') <- handleFullWidths
         if sum widthsInChars' > writerColumns opts
            then -- use even widths
                 handleGivenWidths
                   (replicate numcols (1.0 / fromIntegral numcols) :: [Double])
            else return (widthsInChars', rawHeaders', rawRows')
-  (widthsInChars, rawHeaders, rawRows) <- if all (== 0) widths
-                                             then handleZeroWidths
-                                             else handleGivenWidths widths
+  -- render the contents of header and row cells differently depending
+  -- on command line options, widths given in this specific table, and
+  -- cells' contents
+  let handleWidths
+        | writerWrapText opts == WrapNone  = handleFullWidths
+        | all (== 0) widths                  = handleZeroWidths
+        | otherwise                          = handleGivenWidths widths
+  (widthsInChars, rawHeaders, rawRows) <- handleWidths
   let hpipeBlocks blocks = hcat [beg, middle, end]
         where h       = maximum (1 : map height blocks)
               sep'    = lblock 3 $ vcat (replicate h (text " | "))
@@ -308,3 +331,10 @@ gridTable opts blocksToDoc headless aligns widths headers rows = do
            head'' $$
            body $$
            border '-' (repeat AlignDefault) widthsInChars
+
+metaValueToInlines :: MetaValue -> [Inline]
+metaValueToInlines (MetaString s)    = [Str s]
+metaValueToInlines (MetaInlines ils) = ils
+metaValueToInlines (MetaBlocks bs)   = query return bs
+metaValueToInlines (MetaBool b)      = [Str $ show b]
+metaValueToInlines _                 = []

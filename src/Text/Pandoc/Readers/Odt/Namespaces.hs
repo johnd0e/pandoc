@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-
 Copyright (C) 2015 Martin Linnemann <theCodingMarlin@googlemail.com>
 
@@ -31,6 +32,7 @@ Namespaces used in odt files.
 module Text.Pandoc.Readers.Odt.Namespaces ( Namespace (..)
                                           ) where
 
+import Prelude
 import Data.List (isPrefixOf)
 import qualified Data.Map as M (empty, insert)
 import Data.Maybe (fromMaybe, listToMaybe)
@@ -48,7 +50,7 @@ instance NameSpaceID Namespace where
 
 
 findID :: NameSpaceIRI -> Maybe Namespace
-findID iri = listToMaybe [nsID | (iri',~nsID) <- nsIDs, iri' `isPrefixOf` iri]
+findID iri = listToMaybe [nsID | (iri',nsID) <- nsIDs, iri' `isPrefixOf` iri]
 
 nsIDmap :: NameSpaceIRIs Namespace
 nsIDmap = foldr (uncurry $ flip M.insert) M.empty nsIDs

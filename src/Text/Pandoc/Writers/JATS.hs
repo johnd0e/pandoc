@@ -1,7 +1,8 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 {-
-Copyright (C) 2006-2017 John MacFarlane <jgm@berkeley.edu>
+Copyright (C) 2006-2018 John MacFarlane <jgm@berkeley.edu>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -19,7 +20,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 -}
 {- |
    Module      : Text.Pandoc.Writers.JATS
-   Copyright   : Copyright (C) 2017 John MacFarlane
+   Copyright   : Copyright (C) 2017-2018 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -28,9 +29,10 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 Conversion of 'Pandoc' documents to JATS XML.
 Reference:
-https://jats.nlm.nih.gov/publishing/tag-library/1.1d3/element/mml-math.html
+https://jats.nlm.nih.gov/publishing/tag-library
 -}
 module Text.Pandoc.Writers.JATS ( writeJATS ) where
+import Prelude
 import Control.Monad.Reader
 import Data.Char (toLower)
 import Data.Generics (everywhere, mkT)
@@ -139,7 +141,7 @@ deflistItemToJATS opts term defs = do
   term' <- inlinesToJATS opts term
   def' <- blocksToJATS opts $ concatMap (map plainToPara) defs
   return $ inTagsIndented "def-item" $
-      inTagsIndented "term" term' $$
+      inTagsSimple "term" term' $$
       inTagsIndented "def" def'
 
 -- | Convert a list of lists of blocks to a list of JATS list items.
@@ -156,7 +158,7 @@ listItemToJATS :: PandocMonad m
 listItemToJATS opts mbmarker item = do
   contents <- blocksToJATS opts item
   return $ inTagsIndented "list-item" $
-           maybe empty (\lbl -> inTagsIndented "label" (text lbl)) mbmarker
+           maybe empty (\lbl -> inTagsSimple "label" (text lbl)) mbmarker
            $$ contents
 
 imageMimeType :: String -> [(String, String)] -> (String, String)
@@ -250,7 +252,7 @@ blockToJATS _ (Para [Image (ident,_,kvs) _ (src, tit)]) = do
                         "xlink:type"]]
   return $ selfClosingTag "graphic" attr
 blockToJATS opts (Para lst) =
-  inTagsIndented "p" <$> inlinesToJATS opts lst
+  inTagsSimple "p" <$> inlinesToJATS opts lst
 blockToJATS opts (LineBlock lns) =
   blockToJATS opts $ linesToPara lns
 blockToJATS opts (BlockQuote blocks) =
@@ -326,10 +328,10 @@ tableItemToJATS :: PandocMonad m
                    -> [Block]
                    -> JATS m Doc
 tableItemToJATS opts isHeader [Plain item] =
-  inTags True (if isHeader then "th" else "td") [] <$>
+  inTags False (if isHeader then "th" else "td") [] <$>
     inlinesToJATS opts item
 tableItemToJATS opts isHeader item =
-  (inTags True (if isHeader then "th" else "td") [] . vcat) <$>
+  (inTags False (if isHeader then "th" else "td") [] . vcat) <$>
     mapM (blockToJATS opts) item
 
 -- | Convert a list of inline elements to JATS.

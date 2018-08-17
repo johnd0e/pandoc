@@ -1,10 +1,11 @@
-{-# LANGUAGE FlexibleContexts    #-}
-{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 {- |
    Module      : Text.Pandoc.Writers.ICML
-   Copyright   : Copyright (C) 2013-2017 github.com/mb21
+   Copyright   : Copyright (C) 2013-2018 github.com/mb21
    License     : GNU GPL, version 2 or above
 
    Stability   : alpha
@@ -16,6 +17,7 @@ InCopy is the companion word-processor to Adobe InDesign and ICML documents can 
 into InDesign with File -> Place.
 -}
 module Text.Pandoc.Writers.ICML (writeICML) where
+import Prelude
 import Control.Monad.Except (catchError)
 import Control.Monad.State.Strict
 import Data.List (intersperse, isInfixOf, isPrefixOf, stripPrefix)
@@ -151,10 +153,10 @@ writeICML opts (Pandoc meta blocks) = do
        Nothing  -> return main
        Just tpl -> renderTemplate' tpl context
 
--- | Auxilary functions for parStylesToDoc and charStylesToDoc.
+-- | Auxiliary functions for parStylesToDoc and charStylesToDoc.
 contains :: String -> (String, (String, String)) -> [(String, String)]
 contains s rule =
-  [snd rule | isInfixOf (fst rule) s]
+  [snd rule | (fst rule) `isInfixOf` s]
 
 -- | The monospaced font to use as default.
 monospacedFont :: Doc
@@ -282,7 +284,7 @@ hyperlinksToDoc (x:xs) = hyp x $$ hyperlinksToDoc xs
                     ("Source","htss-"++show ident), ("Visible","true"), ("DestinationUniqueKey","1")]
                   $ inTags True "Properties" []
                   $ inTags False "BorderColor" [("type","enumeration")] (text "Black")
-                  $$ inTags False "Destination" [("type","object")] (text $ "HyperlinkURLDestination/"++(escapeColons (escapeStringForXML url))) -- HyperlinkURLDestination with more than one colon crashes CS6
+                  $$ inTags False "Destination" [("type","object")] (text $ "HyperlinkURLDestination/"++escapeColons (escapeStringForXML url)) -- HyperlinkURLDestination with more than one colon crashes CS6
 
 
 -- | Convert a list of Pandoc blocks to ICML.

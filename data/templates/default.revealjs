@@ -21,7 +21,6 @@ $endif$
       code{white-space: pre-wrap;}
       span.smallcaps{font-variant: small-caps;}
       span.underline{text-decoration: underline;}
-      div.line-block{white-space: pre-line;}
       div.column{display: inline-block; vertical-align: top; width: 50%;}
 $if(quotes)$
       q { quotes: "“" "”" "‘" "’"; }
@@ -171,6 +170,10 @@ $if(mouseWheel)$
         // Enable slide navigation via mouse wheel
         mouseWheel: $mouseWheel$,
 $endif$
+$if(rollingLinks)$
+        // Apply a 3D roll to links on hover
+        rollingLinks: $rollingLinks$,
+$endif$
 $if(hideAddressBar)$
         // Hides the address bar on mobile devices
         hideAddressBar: $hideAddressBar$,
@@ -198,6 +201,11 @@ $endif$
 $if(parallaxBackgroundImage)$
         // Parallax background image
         parallaxBackgroundImage: '$parallaxBackgroundImage$', // e.g. "'https://s3.amazonaws.com/hakim-static/reveal-js/reveal-parallax-1.jpg'"
+$else$
+$if(background-image)$
+       // Parallax background image
+       parallaxBackgroundImage: '$background-image$', // e.g. "'https://s3.amazonaws.com/hakim-static/reveal-js/reveal-parallax-1.jpg'"
+$endif$
 $endif$
 $if(parallaxBackgroundSize)$
         // Parallax background size
@@ -233,7 +241,7 @@ $if(maxScale)$
 $endif$
 $if(mathjax)$
         math: {
-          mathjax: 'https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.0/MathJax.js',
+          mathjax: '$mathjaxurl$',
           config: 'TeX-AMS_HTML-full',
           tex2jax: {
             inlineMath: [['\\(','\\)']],

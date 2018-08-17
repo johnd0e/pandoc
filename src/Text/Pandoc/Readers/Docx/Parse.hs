@@ -1,9 +1,10 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE PatternGuards     #-}
 {-# LANGUAGE ViewPatterns      #-}
 
 {-
-Copyright (C) 2014-2017 Jesse Rosenthal <jrosenthal@jhu.edu>
+Copyright (C) 2014-2018 Jesse Rosenthal <jrosenthal@jhu.edu>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -22,7 +23,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 
 {- |
  Module : Text.Pandoc.Readers.Docx.Parse
- Copyright : Copyright (C) 2014-2017 Jesse Rosenthal
+ Copyright : Copyright (C) 2014-2018 Jesse Rosenthal
  License : GNU GPL, version 2 or above
 
  Maintainer : Jesse Rosenthal <jrosenthal@jhu.edu>
@@ -51,9 +52,14 @@ module Text.Pandoc.Readers.Docx.Parse ( Docx(..)
                                       , ParagraphStyle(..)
                                       , Row(..)
                                       , Cell(..)
+                                      , TrackedChange(..)
+                                      , ChangeType(..)
+                                      , ChangeInfo(..)
+                                      , FieldInfo(..)
                                       , archiveToDocx
                                       , archiveToDocxWithWarnings
                                       ) where
+import Prelude
 import Codec.Archive.Zip
 import Control.Applicative ((<|>))
 import Control.Monad.Except
@@ -67,12 +73,14 @@ import qualified Data.Map as M
 import Data.Maybe
 import System.FilePath
 import Text.Pandoc.Readers.Docx.Util
+import Text.Pandoc.Readers.Docx.Fields
 import Text.Pandoc.Shared (filteredFilesFromArchive, safeRead)
 import qualified Text.Pandoc.UTF8 as UTF8
 import Text.TeXMath (Exp)
 import Text.TeXMath.Readers.OMML (readOMML)
 import Text.TeXMath.Unicode.Fonts (Font (..), getUnicode, stringToFont)
 import Text.XML.Light
+import qualified Text.XML.Light.Cursor as XMLC
 
 data ReaderEnv = ReaderEnv { envNotes         :: Notes
                            , envComments      :: Comments
@@ -86,10 +94,19 @@ data ReaderEnv = ReaderEnv { envNotes         :: Notes
                            }
                deriving Show
 
-data ReaderState = ReaderState { stateWarnings :: [String] }
+data ReaderState = ReaderState { stateWarnings :: [String]
+                               , stateFldCharState :: FldCharState
+                               }
                  deriving Show
 
-data DocxError = DocxError | WrongElem
+data FldCharState = FldCharOpen
+                  | FldCharFieldInfo FieldInfo
+                  | FldCharContent FieldInfo [Run]
+                  | FldCharClosed
+                  deriving (Show)
+
+data DocxError = DocxError
+               | WrongElem
                deriving Show
 
 type D = ExceptT DocxError (ReaderT ReaderEnv (State ReaderState))
@@ -116,6 +133,38 @@ mapD f xs =
   let handler x = (f x >>= (\y-> return [y])) `catchError` (\_ -> return [])
   in
    concatMapM handler xs
+
+unwrap :: NameSpaces -> Content -> [Content]
+unwrap ns (Elem element)
+  | isElem ns "w" "sdt" element
+  , Just sdtContent <- findChildByName ns "w" "sdtContent" element
+  = concatMap ((unwrap ns) . Elem) (elChildren sdtContent)
+  | isElem ns "w" "smartTag" element
+  = concatMap ((unwrap ns) . Elem) (elChildren element)
+unwrap _ content = [content]
+
+unwrapChild :: NameSpaces -> Content -> Content
+unwrapChild ns (Elem element) =
+  Elem $ element { elContent = concatMap (unwrap ns) (elContent element) }
+unwrapChild _ content = content
+
+walkDocument' :: NameSpaces -> XMLC.Cursor -> XMLC.Cursor
+walkDocument' ns cur =
+  let modifiedCur = XMLC.modifyContent (unwrapChild ns) cur
+  in
+    case XMLC.nextDF modifiedCur of
+      Just cur' -> walkDocument' ns cur'
+      Nothing   -> XMLC.root modifiedCur
+
+walkDocument :: NameSpaces -> Element -> Maybe Element
+walkDocument ns element =
+  let cur = XMLC.fromContent (Elem element)
+      cur' = walkDocument' ns cur
+  in
+    case XMLC.toTree cur' of
+      Elem element' -> Just element'
+      _             -> Nothing
+
 
 data Docx = Docx Document
           deriving Show
@@ -167,12 +216,22 @@ data ParIndentation = ParIndentation { leftParIndent    :: Maybe Integer
                                      , hangingParIndent :: Maybe Integer}
                       deriving Show
 
+data ChangeType = Insertion | Deletion
+                deriving Show
+
+data ChangeInfo = ChangeInfo ChangeId Author ChangeDate
+                deriving Show
+
+data TrackedChange = TrackedChange ChangeType ChangeInfo
+                   deriving Show
+
 data ParagraphStyle = ParagraphStyle { pStyle      :: [String]
                                      , indentation :: Maybe ParIndentation
                                      , dropCap     :: Bool
                                      , pHeading    :: Maybe (String, Int)
                                      , pNumInfo    :: Maybe (String, String)
                                      , pBlockQuote :: Maybe Bool
+                                     , pChange     :: Maybe TrackedChange
                                      }
                       deriving Show
 
@@ -183,6 +242,7 @@ defaultParagraphStyle = ParagraphStyle { pStyle = []
                                        , pHeading    = Nothing
                                        , pNumInfo    = Nothing
                                        , pBlockQuote = Nothing
+                                       , pChange     = Nothing
                                        }
 
 
@@ -210,8 +270,7 @@ data Cell = Cell [BodyPart]
 type Extent = Maybe (Double, Double)
 
 data ParPart = PlainRun Run
-             | Insertion ChangeId Author ChangeDate [Run]
-             | Deletion ChangeId Author ChangeDate [Run]
+             | ChangedRuns TrackedChange [Run]
              | CommentStart CommentId Author CommentDate [BodyPart]
              | CommentEnd CommentId
              | BookMark BookMarkId Anchor
@@ -220,7 +279,9 @@ data ParPart = PlainRun Run
              | Drawing FilePath String String B.ByteString Extent -- title, alt
              | Chart                                              -- placeholder for now
              | PlainOMath [Exp]
-             | SmartTag [Run]
+             | Field FieldInfo [Run]
+             | NullParPart      -- when we need to return nothing, but
+                                -- not because of an error.
              deriving Show
 
 data Run = Run RunStyle [RunElem]
@@ -284,7 +345,9 @@ archiveToDocxWithWarnings archive = do
       (styles, parstyles) = archiveToStyles archive
       rEnv =
         ReaderEnv notes comments numbering rels media Nothing styles parstyles InDocument
-      rState = ReaderState { stateWarnings = [] }
+      rState = ReaderState { stateWarnings = []
+                           , stateFldCharState = FldCharClosed
+                           }
       (eitherDoc, st) = runD (archiveToDocument archive) rEnv rState
   case eitherDoc of
     Right doc -> Right (Docx doc, stateWarnings st)
@@ -298,7 +361,8 @@ archiveToDocument zf = do
   docElem <- maybeToD $ (parseXMLDoc . UTF8.toStringLazy . fromEntry) entry
   let namespaces = elemToNameSpaces docElem
   bodyElem <- maybeToD $ findChildByName namespaces "w" "body" docElem
-  body <- elemToBody namespaces bodyElem
+  let bodyElem' = fromMaybe bodyElem (walkDocument namespaces bodyElem)
+  body <- elemToBody namespaces bodyElem'
   return $ Document namespaces body
 
 elemToBody :: NameSpaces -> Element -> D Body
@@ -540,7 +604,7 @@ elemToTblLook ns element | isElem ns "w" "tblLook" element =
             Just bitMask -> testBitMask bitMask 0x020
             Nothing      -> False
   in
-   return $ TblLook{firstRowFormatting = firstRowFmt}
+   return TblLook{firstRowFormatting = firstRowFmt}
 elemToTblLook _ _ = throwError WrongElem
 
 elemToRow :: NameSpaces -> Element -> D Row
@@ -560,7 +624,7 @@ elemToCell _ _ = throwError WrongElem
 
 elemToParIndentation :: NameSpaces -> Element -> Maybe ParIndentation
 elemToParIndentation ns element | isElem ns "w" "ind" element =
-  Just $ ParIndentation {
+ Just ParIndentation {
     leftParIndent =
        findAttrByName ns "w" "left" element >>=
        stringToInteger
@@ -689,27 +753,81 @@ elemToParPart ns element
   , c_ns <- "http://schemas.openxmlformats.org/drawingml/2006/chart"
   , Just _ <- findElement (QName "chart" (Just c_ns) (Just "c")) drawingElem
   = return Chart
+{-
+The next one is a bit complicated. fldChar fields work by first
+having a <w:fldChar fldCharType="begin"> in a run, then a run with
+<w:instrText>, then a <w:fldChar fldCharType="separate"> run, then the
+content runs, and finally a <w:fldChar fldCharType="end"> run. For
+example (omissions and my comments in brackets):
+
+      <w:r>
+        [...]
+        <w:fldChar w:fldCharType="begin"/>
+      </w:r>
+      <w:r>
+        [...]
+        <w:instrText xml:space="preserve"> HYPERLINK [hyperlink url] </w:instrText>
+      </w:r>
+      <w:r>
+        [...]
+        <w:fldChar w:fldCharType="separate"/>
+      </w:r>
+      <w:r w:rsidRPr=[...]>
+        [...]
+        <w:t>Foundations of Analysis, 2nd Edition</w:t>
+      </w:r>
+      <w:r>
+        [...]
+        <w:fldChar w:fldCharType="end"/>
+      </w:r>
+
+So we do this in a number of steps. If we encounter the fldchar begin
+tag, we start open a fldchar state variable (see state above). We add
+the instrtext to it as FieldInfo. Then we close that and start adding
+the runs when we get to separate. Then when we get to end, we produce
+the Field type with appropriate FieldInfo and Runs.
+-}
 elemToParPart ns element
-  | isElem ns "w" "r" element =
-    elemToRun ns element >>= (\r -> return $ PlainRun r)
+  | isElem ns "w" "r" element
+  , Just fldChar <- findChildByName ns "w" "fldChar" element
+  , Just fldCharType <- findAttrByName ns "w" "fldCharType" fldChar = do
+      fldCharState <- gets stateFldCharState
+      case fldCharState of
+        FldCharClosed | fldCharType == "begin" -> do
+          modify $ \st -> st {stateFldCharState = FldCharOpen}
+          return NullParPart
+        FldCharFieldInfo info | fldCharType == "separate" -> do
+          modify $ \st -> st {stateFldCharState = FldCharContent info []}
+          return NullParPart
+        FldCharContent info runs | fldCharType == "end" -> do
+          modify $ \st -> st {stateFldCharState = FldCharClosed}
+          return $ Field info $ reverse runs
+        _ -> throwError WrongElem
 elemToParPart ns element
-  | isElem ns "w" "ins" element || isElem ns "w" "moveTo" element
-  , Just cId <- findAttrByName ns "w" "id" element
-  , Just cAuthor <- findAttrByName ns "w" "author" element
-  , Just cDate <- findAttrByName ns "w" "date" element = do
-    runs <- mapD (elemToRun ns) (elChildren element)
-    return $ Insertion cId cAuthor cDate runs
+  | isElem ns "w" "r" element
+  , Just instrText <- findChildByName ns "w" "instrText" element = do
+      fldCharState <- gets stateFldCharState
+      case fldCharState of
+        FldCharOpen -> do
+          info <- eitherToD $ parseFieldInfo $ strContent instrText
+          modify $ \st -> st{stateFldCharState = FldCharFieldInfo info}
+          return NullParPart
+        _ -> return NullParPart
 elemToParPart ns element
-  | isElem ns "w" "del" element || isElem ns "w" "moveFrom" element
-  , Just cId <- findAttrByName ns "w" "id" element
-  , Just cAuthor <- findAttrByName ns "w" "author" element
-  , Just cDate <- findAttrByName ns "w" "date" element = do
-    runs <- mapD (elemToRun ns) (elChildren element)
-    return $ Deletion cId cAuthor cDate runs
+  | isElem ns "w" "r" element = do
+    run <- elemToRun ns element
+    -- we check to see if we have an open FldChar in state that we're
+    -- recording.
+    fldCharState <- gets stateFldCharState
+    case fldCharState of
+      FldCharContent info runs -> do
+        modify $ \st -> st{stateFldCharState = FldCharContent info (run : runs)}
+        return NullParPart
+      _ -> return $ PlainRun run
 elemToParPart ns element
-  | isElem ns "w" "smartTag" element = do
-    runs <- mapD (elemToRun ns) (elChildren element)
-    return $ SmartTag runs
+  | Just change <- getTrackedChange ns element = do
+      runs <- mapD (elemToRun ns) (elChildren element)
+      return $ ChangedRuns change runs
 elemToParPart ns element
   | isElem ns "w" "bookmarkStart" element
   , Just bmId <- findAttrByName ns "w" "id" element
@@ -856,6 +974,21 @@ getParStyleField field stylemap styles
            = Just y
 getParStyleField _ _ _ = Nothing
 
+getTrackedChange :: NameSpaces -> Element -> Maybe TrackedChange
+getTrackedChange ns element
+  | isElem ns "w" "ins" element || isElem ns "w" "moveTo" element
+  , Just cId <- findAttrByName ns "w" "id" element
+  , Just cAuthor <- findAttrByName ns "w" "author" element
+  , Just cDate <- findAttrByName ns "w" "date" element =
+      Just $ TrackedChange Insertion (ChangeInfo cId cAuthor cDate)
+getTrackedChange ns element
+  | isElem ns "w" "del" element || isElem ns "w" "moveFrom" element
+  , Just cId <- findAttrByName ns "w" "id" element
+  , Just cAuthor <- findAttrByName ns "w" "author" element
+  , Just cDate <- findAttrByName ns "w" "date" element =
+      Just $ TrackedChange Deletion (ChangeInfo cId cAuthor cDate)
+getTrackedChange _ _ = Nothing
+
 elemToParagraphStyle :: NameSpaces -> Element -> ParStyleMap -> ParagraphStyle
 elemToParagraphStyle ns element sty
   | Just pPr <- findChildByName ns "w" "pPr" element =
@@ -879,6 +1012,13 @@ elemToParagraphStyle ns element sty
       , pHeading = getParStyleField headingLev sty style
       , pNumInfo = getParStyleField numInfo sty style
       , pBlockQuote = getParStyleField isBlockQuote sty style
+      , pChange     = findChildByName ns "w" "rPr" pPr >>=
+                      filterChild (\e -> isElem ns "w" "ins" e ||
+                                         isElem ns "w" "moveTo" e ||
+                                         isElem ns "w" "del" e ||
+                                         isElem ns "w" "moveFrom" e
+                                  ) >>=
+                      getTrackedChange ns
       }
 elemToParagraphStyle _ _ _ =  defaultParagraphStyle
 
@@ -1013,8 +1153,9 @@ getSymChar :: NameSpaces -> Element -> RunElem
 getSymChar ns element
   | Just s <- lowerFromPrivate <$> getCodepoint
   , Just font <- getFont =
-  let [(char, _)] = readLitChar ("\\x" ++ s) in
-    TextRun . maybe "" (:[]) $ getUnicode font char
+    case readLitChar ("\\x" ++ s) of
+         [(char, _)] -> TextRun . maybe "" (:[]) $ getUnicode font char
+         _           -> TextRun ""
   where
     getCodepoint = findAttrByName ns "w" "char" element
     getFont = stringToFont =<< findAttrByName ns "w" "font" element
@@ -1030,8 +1171,7 @@ elemToRunElems ns element
        let font = do
                     fontElem <- findElement (qualName "rFonts") element
                     stringToFont =<<
-                      foldr (<|>) Nothing (
-                        map (flip findAttr fontElem . qualName) ["ascii", "hAnsi"])
+                       foldr ((<|>) . (flip findAttr fontElem . qualName)) Nothing ["ascii", "hAnsi"]
        local (setFont font) (mapD (elemToRunElem ns) (elChildren element))
 elemToRunElems _ _ = throwError WrongElem
 

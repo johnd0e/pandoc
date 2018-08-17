@@ -1,5 +1,6 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-
-Copyright (C) 2011-2017 John MacFarlane <jgm@berkeley.edu>
+Copyright (C) 2011-2018 John MacFarlane <jgm@berkeley.edu>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -18,7 +19,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 {- |
    Module      : Text.Pandoc.MIME
-   Copyright   : Copyright (C) 2011-2017 John MacFarlane
+   Copyright   : Copyright (C) 2011-2018 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -29,6 +30,7 @@ Mime type lookup for ODT writer.
 -}
 module Text.Pandoc.MIME ( MimeType, getMimeType, getMimeTypeDef,
                           extensionFromMimeType )where
+import Prelude
 import Data.Char (toLower)
 import Data.List (isPrefixOf, isSuffixOf)
 import qualified Data.Map as M
@@ -172,7 +174,7 @@ mimeTypesList = -- List borrowed from happstack-server.
            ,("eml","message/rfc822")
            ,("ent","chemical/x-ncbi-asn1-ascii")
            ,("eot","application/vnd.ms-fontobject")
-           ,("eps","application/postscript")
+           ,("eps","application/eps")
            ,("etx","text/x-setext")
            ,("exe","application/x-msdos-program")
            ,("ez","application/andrew-inset")
@@ -325,6 +327,7 @@ mimeTypesList = -- List borrowed from happstack-server.
            ,("ogv","video/ogg")
            ,("ogx","application/ogg")
            ,("old","application/x-trash")
+           ,("opus","audio/ogg")
            ,("otg","application/vnd.oasis.opendocument.graphics-template")
            ,("oth","application/vnd.oasis.opendocument.text-web")
            ,("otp","application/vnd.oasis.opendocument.presentation-template")

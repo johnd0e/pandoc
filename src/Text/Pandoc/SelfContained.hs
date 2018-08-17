@@ -1,6 +1,7 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-
-Copyright (C) 2011-2017 John MacFarlane <jgm@berkeley.edu>
+Copyright (C) 2011-2018 John MacFarlane <jgm@berkeley.edu>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -19,7 +20,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 {- |
    Module      : Text.Pandoc.SelfContained
-   Copyright   : Copyright (C) 2011-2017 John MacFarlane
+   Copyright   : Copyright (C) 2011-2018 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -31,6 +32,7 @@ offline, by incorporating linked images, CSS, and scripts into
 the HTML using data URIs.
 -}
 module Text.Pandoc.SelfContained ( makeDataURI, makeSelfContained ) where
+import Prelude
 import Codec.Compression.GZip as Gzip
 import Control.Applicative ((<|>))
 import Control.Monad.Except (throwError)
@@ -41,7 +43,6 @@ import qualified Data.ByteString.Char8 as B
 import qualified Data.ByteString.Lazy as L
 import Data.Char (isAlphaNum, isAscii, toLower)
 import Data.List (isPrefixOf)
-import Data.Monoid ((<>))
 import Network.URI (escapeURIString)
 import System.FilePath (takeDirectory, takeExtension, (</>))
 import Text.HTML.TagSoup

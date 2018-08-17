@@ -65,7 +65,7 @@ tags. These are used to indicate the *complexity* and *nature* of a
 bug. There is not yet a way to indicate priority. An up to date
 summary of issues can be found on [GitHub labels].
 
-* [beginner-friendly] — The perfect starting point for new contributors. The
+* [good first issue] — The perfect starting point for new contributors. The
   issue is generic and can be resolved without deep knowledge of the code
   base.
 * [enhancement] — A feature which would be desirable. We recommend
@@ -144,13 +144,10 @@ Please follow these guidelines:
 9.  It is better not to introduce new dependencies.  Dependencies on
     external C libraries should especially be avoided.
 
-10. We aim for compatibility with ghc versions from 7.8.3 to the
+10. We aim for compatibility with ghc versions from 7.10.3 to the
     latest release.  All pull requests and commits are tested
     automatically on <travis-ci.org>, using GHC versions in the
-    `Tested-With` stanza of `pandoc.cabal`.  We currently relax
-    the "`-Wall` clean" requirement for GHC 7.10.x, because
-    there are so many warnings relating to the addition of type
-    classes to the Prelude.
+    `Tested-With` stanza of `pandoc.cabal`.
 
 Tests
 -----
@@ -204,6 +201,10 @@ placed in the source directory):
 
 Profiling
 ---------
+
+To diagnose a performance issue with parsing, first try using
+the `--trace` option.  This will give you a record of when block
+parsers succeed, so you can spot backtracking issues.
 
 To use the GHC profiler with cabal:
 
@@ -263,7 +264,7 @@ The library is structured as follows:
   - `Text.Pandoc.Definition` (in `pandoc-types`) defines the types
     used for representing a pandoc document.
   - `Text.Pandoc.Builder` (in `pandoc-types`) provides functions for
-    building pandoc documents programatically.
+    building pandoc documents programmatically.
   - `Text.Pandoc.Generics` (in `pandoc-types`) provides functions allowing
     you to promote functions that operate on parts of pandoc documents
     to functions that operate on whole pandoc documents, walking the
@@ -314,7 +315,7 @@ The library is structured as follows:
 [Haskell platform]: http://www.haskell.org/platform/
 [hsb2hs]: http://hackage.haskell.org/package/hsb2hs
 [GitHub labels]: https://github.com/jgm/pandoc/labels
-[beginner-friendly]: https://github.com/jgm/pandoc/labels/beginner-friendly
+[good first issue]:https://github.com/jgm/pandoc/labels/good%20first%20issue
 [enhancement]: https://github.com/jgm/pandoc/labels/enhancement
 [bug]: https://github.com/jgm/pandoc/labels/bug
 [complexity:low]: https://github.com/jgm/pandoc/labels/complexity:low

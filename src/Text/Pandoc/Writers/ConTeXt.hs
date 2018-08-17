@@ -1,7 +1,8 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-
-Copyright (C) 2007-2017 John MacFarlane <jgm@berkeley.edu>
+Copyright (C) 2007-2018 John MacFarlane <jgm@berkeley.edu>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -20,7 +21,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 {- |
    Module      : Text.Pandoc.Writers.ConTeXt
-   Copyright   : Copyright (C) 2007-2017 John MacFarlane
+   Copyright   : Copyright (C) 2007-2018 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -30,6 +31,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 Conversion of 'Pandoc' format into ConTeXt.
 -}
 module Text.Pandoc.Writers.ConTeXt ( writeConTeXt ) where
+import Prelude
 import Control.Monad.State.Strict
 import Data.Char (ord, isDigit)
 import Data.List (intercalate, intersperse)
@@ -54,6 +56,8 @@ data WriterState =
               , stOrderedListLevel :: Int  -- level of ordered list
               , stOptions          :: WriterOptions -- writer options
               }
+
+data Tabl = Xtb | Ntb deriving (Show, Eq)
 
 orderedListStyles :: [Char]
 orderedListStyles = cycle "narg"
@@ -157,8 +161,9 @@ elementToConTeXt :: PandocMonad m => WriterOptions -> Element -> WM m Doc
 elementToConTeXt _ (Blk block) = blockToConTeXt block
 elementToConTeXt opts (Sec level _ attr title' elements) = do
   header' <- sectionHeader attr level title'
+  footer' <- sectionFooter attr level
   innerContents <- mapM (elementToConTeXt opts) elements
-  return $ vcat (header' : innerContents)
+  return $ header' $$ vcat innerContents $$ footer'
 
 -- | Convert Pandoc block element to ConTeXt.
 blockToConTeXt :: PandocMonad m => Block -> WM m Doc
@@ -185,10 +190,9 @@ blockToConTeXt (BlockQuote lst) = do
 blockToConTeXt (CodeBlock _ str) =
   return $ flush ("\\starttyping" <> cr <> text str <> cr <> "\\stoptyping") $$ blankline
   -- blankline because \stoptyping can't have anything after it, inc. '}'
-blockToConTeXt (RawBlock "context" str) = return $ text str <> blankline
-blockToConTeXt b@(RawBlock _ _ ) = do
-  report $ BlockNotRendered b
-  return empty
+blockToConTeXt b@(RawBlock f str)
+  | f == Format "context" || f == Format "tex" = return $ text str <> blankline
+  | otherwise = empty <$ report (BlockNotRendered b)
 blockToConTeXt (Div (ident,_,kvs) bs) = do
   let align dir txt = "\\startalignment[" <> dir <> "]" $$ txt $$ "\\stopalignment"
   mblang <- fromBCP47 (lookup "lang" kvs)
@@ -252,33 +256,77 @@ blockToConTeXt HorizontalRule = return $ "\\thinrule" <> blankline
 -- If this is ever executed, provide a default for the reference identifier.
 blockToConTeXt (Header level attr lst) = sectionHeader attr level lst
 blockToConTeXt (Table caption aligns widths heads rows) = do
-    let colDescriptor colWidth alignment = (case alignment of
-                                               AlignLeft    -> 'l'
-                                               AlignRight   -> 'r'
-                                               AlignCenter  -> 'c'
-                                               AlignDefault -> 'l'):
-           if colWidth == 0
-              then "|"
-              else ("p(" ++ printf "%.2f" colWidth ++ "\\textwidth)|")
-    let colDescriptors = "|" ++ concat (
-                                 zipWith colDescriptor widths aligns)
-    headers <- if all null heads
-                  then return empty
-                  else liftM ($$ "\\HL") $ tableRowToConTeXt heads
+    opts <- gets stOptions
+    let tabl = if isEnabled Ext_ntb opts
+          then Ntb
+          else Xtb
     captionText <- inlineListToConTeXt caption
-    rows' <- mapM tableRowToConTeXt rows
-    return $ "\\placetable" <> (if null caption
-                                   then brackets "none"
-                                   else empty)
-                            <> braces captionText $$
-             "\\starttable" <> brackets (text colDescriptors) $$
-             "\\HL" $$ headers $$
-             vcat rows' $$ "\\HL" $$ "\\stoptable" <> blankline
+    headers <- if all null heads
+               then return empty
+               else tableRowToConTeXt tabl aligns widths heads
+    rows' <- mapM (tableRowToConTeXt tabl aligns widths) rows
+    body <- tableToConTeXt tabl headers rows'
+    return $ "\\startplacetable" <> brackets (
+      if null caption
+        then "location=none"
+        else "title=" <> braces captionText
+      ) $$ body $$ "\\stopplacetable" <> blankline
 
-tableRowToConTeXt :: PandocMonad m => [[Block]] -> WM m Doc
-tableRowToConTeXt cols = do
-  cols' <- mapM blockListToConTeXt cols
-  return $ vcat (map ("\\NC " <>) cols') $$ "\\NC\\AR"
+tableToConTeXt :: PandocMonad m => Tabl -> Doc -> [Doc] -> WM m Doc
+tableToConTeXt Xtb heads rows =
+  return $ "\\startxtable" $$
+    (if isEmpty heads
+      then empty
+      else "\\startxtablehead[head]" $$ heads $$ "\\stopxtablehead") $$
+    (if null rows
+      then empty
+      else "\\startxtablebody[body]" $$ vcat (init rows) $$ "\\stopxtablebody" $$
+           "\\startxtablefoot[foot]" $$ last rows $$ "\\stopxtablefoot") $$
+    "\\stopxtable"
+tableToConTeXt Ntb heads rows =
+  return $ "\\startTABLE" $$
+    (if isEmpty heads
+      then empty
+      else "\\startTABLEhead" $$ heads $$ "\\stopTABLEhead") $$
+    (if null rows
+      then empty
+      else "\\startTABLEbody" $$ vcat (init rows) $$ "\\stopTABLEbody" $$
+           "\\startTABLEfoot" $$ last rows $$ "\\stopTABLEfoot") $$
+    "\\stopTABLE"
+
+tableRowToConTeXt :: PandocMonad m => Tabl -> [Alignment] -> [Double] -> [[Block]] -> WM m Doc
+tableRowToConTeXt Xtb aligns widths cols = do
+  cells <- mapM (tableColToConTeXt Xtb) $ zip3 aligns widths cols
+  return $ "\\startxrow" $$ vcat cells $$ "\\stopxrow"
+tableRowToConTeXt Ntb aligns widths cols = do
+  cells <- mapM (tableColToConTeXt Ntb) $ zip3 aligns widths cols
+  return $ vcat cells $$ "\\NC\\NR"
+
+tableColToConTeXt :: PandocMonad m => Tabl -> (Alignment, Double, [Block]) -> WM m Doc
+tableColToConTeXt tabl (align, width, blocks) = do
+  cellContents <- blockListToConTeXt blocks
+  let colwidth = if width == 0
+        then empty
+        else "width=" <> braces (text (printf "%.2f\\textwidth" width))
+  let halign = alignToConTeXt align
+  let options = (if keys == empty
+                 then empty
+                 else brackets keys) <> space
+        where keys = hcat $ intersperse "," $ filter (empty /=) [halign, colwidth]
+  tableCellToConTeXt tabl options cellContents
+
+tableCellToConTeXt :: PandocMonad m => Tabl -> Doc -> Doc -> WM m Doc
+tableCellToConTeXt Xtb options cellContents =
+  return $ "\\startxcell" <> options <> cellContents <> " \\stopxcell"
+tableCellToConTeXt Ntb options cellContents =
+  return $ "\\NC" <> options <> cellContents
+
+alignToConTeXt :: Alignment -> Doc
+alignToConTeXt align = case align of
+                         AlignLeft    -> "align=right"
+                         AlignRight   -> "align=left"
+                         AlignCenter  -> "align=middle"
+                         AlignDefault -> empty
 
 listItemToConTeXt :: PandocMonad m => [Block] -> WM m Doc
 listItemToConTeXt list = blockListToConTeXt list >>=
@@ -352,11 +400,9 @@ inlineToConTeXt (Math InlineMath str) =
   return $ char '$' <> text str <> char '$'
 inlineToConTeXt (Math DisplayMath str) =
   return $ text "\\startformula "  <> text str <> text " \\stopformula" <> space
-inlineToConTeXt (RawInline "context" str) = return $ text str
-inlineToConTeXt (RawInline "tex" str) = return $ text str
-inlineToConTeXt il@(RawInline _ _) = do
-  report $ InlineNotRendered il
-  return empty
+inlineToConTeXt il@(RawInline f str)
+  | f == Format "tex" || f == Format "context" = return $ text str
+  | otherwise = empty <$ report (InlineNotRendered il)
 inlineToConTeXt LineBreak = return $ text "\\crlf" <> cr
 inlineToConTeXt SoftBreak = do
   wrapText <- gets (writerWrapText . stOptions)
@@ -439,32 +485,51 @@ sectionHeader :: PandocMonad m
               -> Int
               -> [Inline]
               -> WM m Doc
-sectionHeader (ident,classes,_) hdrLevel lst = do
+sectionHeader (ident,classes,kvs) hdrLevel lst = do
+  opts <- gets stOptions
   contents <- inlineListToConTeXt lst
-  st <- get
-  let opts = stOptions st
+  levelText <- sectionLevelToText opts (ident,classes,kvs) hdrLevel
+  let ident' = if null ident
+               then empty
+               else "reference=" <> braces (text (toLabel ident))
+  let contents' = if contents == empty
+                  then empty
+                  else "title=" <> braces contents
+  let options = if keys == empty || levelText == empty
+                then empty
+                else brackets keys
+        where keys = hcat $ intersperse "," $ filter (empty /=) [contents', ident']
+  let starter = if writerSectionDivs opts
+                then "\\start"
+                else "\\"
+  return $ starter <> levelText <> options <> blankline
+
+-- | Craft the section footer
+sectionFooter :: PandocMonad m => Attr -> Int -> WM m Doc
+sectionFooter attr hdrLevel = do
+  opts <- gets stOptions
+  levelText <- sectionLevelToText opts attr hdrLevel
+  return $ if writerSectionDivs opts
+           then "\\stop" <> levelText <> blankline
+           else empty
+
+-- | Generate a textual representation of the section level
+sectionLevelToText :: PandocMonad m => WriterOptions -> Attr -> Int -> WM m Doc
+sectionLevelToText opts (_,classes,_) hdrLevel = do
   let level' = case writerTopLevelDivision opts of
                  TopLevelPart    -> hdrLevel - 2
                  TopLevelChapter -> hdrLevel - 1
                  TopLevelSection -> hdrLevel
                  TopLevelDefault -> hdrLevel
-  let ident' = if null ident
-                  then empty
-                  else brackets (text (toLabel ident))
   let (section, chapter) = if "unnumbered" `elem` classes
                               then (text "subject", text "title")
                               else (text "section", text "chapter")
   return $ case level' of
-             -1                   -> text "\\part" <> ident' <> braces contents
-             0                    -> char '\\' <> chapter <> ident' <>
-                                           braces contents
-             n | n >= 1 && n <= 5 -> char '\\'
-                                     <> text (concat (replicate (n - 1) "sub"))
-                                     <> section
-                                     <> ident'
-                                     <> braces contents
-                                     <> blankline
-             _                    -> contents <> blankline
+             -1         -> text "part"
+             0          -> chapter
+             n | n >= 1 -> text (concat (replicate (n - 1) "sub"))
+                           <> section
+             _          -> empty -- cannot happen
 
 fromBCP47 :: PandocMonad m => Maybe String -> WM m (Maybe String)
 fromBCP47 mbs = fromBCP47' <$> toLang mbs

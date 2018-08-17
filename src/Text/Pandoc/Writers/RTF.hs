@@ -1,6 +1,7 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-
-Copyright (C) 2006-2017 John MacFarlane <jgm@berkeley.edu>
+Copyright (C) 2006-2018 John MacFarlane <jgm@berkeley.edu>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -19,7 +20,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 {- |
    Module      : Text.Pandoc.Writers.RTF
-   Copyright   : Copyright (C) 2006-2017 John MacFarlane
+   Copyright   : Copyright (C) 2006-2018 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -30,7 +31,9 @@ Conversion of 'Pandoc' documents to RTF (rich text format).
 -}
 module Text.Pandoc.Writers.RTF ( writeRTF
                                ) where
+import Prelude
 import Control.Monad.Except (catchError, throwError)
+import Control.Monad
 import qualified Data.ByteString as B
 import Data.Char (chr, isDigit, ord)
 import Data.List (intercalate, isSuffixOf)
@@ -278,8 +281,7 @@ blockToRTF indent alignment (BulletList lst) = (spaceAtEnd . concat) <$>
   mapM (listItemToRTF alignment indent (bulletMarker indent)) lst
 blockToRTF indent alignment (OrderedList attribs lst) =
   (spaceAtEnd . concat) <$>
-   mapM (uncurry (listItemToRTF alignment indent))
-   (zip (orderedMarkers indent attribs) lst)
+   zipWithM (listItemToRTF alignment indent) (orderedMarkers indent attribs) lst
 blockToRTF indent alignment (DefinitionList lst) = (spaceAtEnd . concat) <$>
   mapM (definitionListItemToRTF alignment indent) lst
 blockToRTF indent _ HorizontalRule = return $
@@ -303,8 +305,8 @@ tableRowToRTF header indent aligns sizes' cols = do
   let sizes = if all (== 0) sizes'
                  then replicate (length cols) (1.0 / fromIntegral (length cols))
                  else sizes'
-  columns <- concat <$> mapM (uncurry (tableItemToRTF indent))
-                         (zip aligns cols)
+  columns <- concat <$>
+     zipWithM (tableItemToRTF indent) aligns cols
   let rightEdges = tail $ scanl (\sofar new -> sofar + floor (new * totalTwips))
                                 (0 :: Integer) sizes
   let cellDefs = map (\edge -> (if header

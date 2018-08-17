@@ -1,5 +1,19 @@
 utils = require 'pandoc.utils'
 
+-- Squash blocks to inlines
+------------------------------------------------------------------------
+function test_blocks_to_inlines ()
+  local blocks = {
+    pandoc.Para{ pandoc.Str 'Paragraph1' },
+    pandoc.Para{ pandoc.Emph 'Paragraph2' }
+  }
+  local inlines = utils.blocks_to_inlines(blocks, {pandoc.LineBreak()})
+  return #inlines == 3
+    and inlines[1].text == "Paragraph1"
+    and inlines[2].t == 'LineBreak'
+    and inlines[3].content[1].text == "Paragraph2"
+end
+
 -- hierarchicalize
 ------------------------------------------------------------------------
 function test_hierarchicalize ()
@@ -32,25 +46,33 @@ end
 
 function warn (...) io.stderr:write(...) end
 
+function os_is_windows ()
+  return package.config:sub(1,1) == '\\'
+end
+
 function test_pipe ()
-  if not file_exists('/bin/sed') then
-    warn 'Did not find /bin/sed, skipping test'
-    return true
+  if os_is_windows() then
+    local pipe_result = pandoc.pipe('find', {'hi'}, 'hi')
+    return pipe_result:match("%a+") == 'hi'
+  else
+    local pipe_result = pandoc.pipe('tr', {'a', 'b'}, 'abc')
+    return pipe_result:match("%a+") == 'bbc'
   end
-  local pipe_result = pandoc.pipe('/bin/sed', {'-e', 's/a/b/'}, 'abc')
-  return pipe_result == 'bbc'
 end
 
 function test_failing_pipe ()
-  if not file_exists('/bin/false') then
-    warn 'Did not find /bin/false, skipping test'
-    return true
+  if os_is_windows() then
+    local res, err = pcall(pandoc.pipe, 'find', {'/a'}, 'hi')
+    return not res and
+      err.command == 'find' and
+      err.error_code ~= 0
+  else
+    local res, err = pcall(pandoc.pipe, 'false', {}, 'abc')
+    return not res and
+      err.command == 'false' and
+      err.error_code == 1 and
+      err.output == ''
   end
-  local res, err = pcall(pandoc.pipe, '/bin/false', {}, 'abc')
-  return not res and
-    err.command == '/bin/false' and
-    err.error_code == 1 and
-    err.output == ''
 end
 
 -- Read
@@ -102,6 +124,7 @@ end
 
 function Para (el)
   return {
+    pandoc.Plain{pandoc.Str("blocks_to_inlines: " .. run(test_blocks_to_inlines))},
     pandoc.Plain{pandoc.Str("hierarchicalize: " .. run(test_hierarchicalize))},
     pandoc.Plain{pandoc.Str("normalize_date: " .. run(test_normalize_date))},
     pandoc.Plain{pandoc.Str("pipe: " .. run(test_pipe))},

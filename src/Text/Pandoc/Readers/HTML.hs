@@ -1,10 +1,11 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE ViewPatterns          #-}
 {-
-Copyright (C) 2006-2017 John MacFarlane <jgm@berkeley.edu>
+Copyright (C) 2006-2018 John MacFarlane <jgm@berkeley.edu>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -23,7 +24,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 {- |
    Module      : Text.Pandoc.Readers.HTML
-   Copyright   : Copyright (C) 2006-2017 John MacFarlane
+   Copyright   : Copyright (C) 2006-2018 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -42,19 +43,20 @@ module Text.Pandoc.Readers.HTML ( readHtml
                                 , isCommentTag
                                 ) where
 
+import Prelude
 import Control.Applicative ((<|>))
-import Control.Arrow ((***))
+import Control.Arrow (first)
 import Control.Monad (guard, mplus, msum, mzero, unless, void)
 import Control.Monad.Except (throwError)
 import Control.Monad.Reader (ReaderT, ask, asks, lift, local, runReaderT)
 import Data.Char (isAlphaNum, isDigit, isLetter)
 import Data.Default (Default (..), def)
 import Data.Foldable (for_)
-import Data.List (intercalate, isPrefixOf)
-import Data.List.Split (wordsBy)
+import Data.List (isPrefixOf)
+import Data.List.Split (wordsBy, splitWhen)
 import qualified Data.Map as M
 import Data.Maybe (fromMaybe, isJust, isNothing)
-import Data.Monoid (First (..), (<>))
+import Data.Monoid (First (..))
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -70,12 +72,12 @@ import Text.Pandoc.Error
 import Text.Pandoc.Logging
 import Text.Pandoc.Options (
     Extension (Ext_epub_html_exts, Ext_empty_paragraphs, Ext_native_divs,
-               Ext_native_spans, Ext_raw_html),
+               Ext_native_spans, Ext_raw_html, Ext_line_blocks),
     ReaderOptions (readerExtensions, readerStripComments),
     extensionEnabled)
 import Text.Pandoc.Parsing hiding ((<|>))
-import Text.Pandoc.Shared (addMetaField, crFilter, escapeURI, extractSpaces,
-                           safeRead, underlineSpan)
+import Text.Pandoc.Shared (addMetaField, blocksToInlines', crFilter, escapeURI,
+                           extractSpaces, safeRead, underlineSpan)
 import Text.Pandoc.Walk
 import Text.Parsec.Error
 import Text.TeXMath (readMathML, writeTeX)
@@ -191,6 +193,7 @@ block = do
             , pHtml
             , pHead
             , pBody
+            , pLineBlock
             , pDiv
             , pPlain
             , pFigure
@@ -377,6 +380,16 @@ pRawTag = do
      then return mempty
      else return $ renderTags' [tag]
 
+pLineBlock :: PandocMonad m => TagParser m Blocks
+pLineBlock = try $ do
+  guardEnabled Ext_line_blocks
+  _ <- pSatisfy $ tagOpen (=="div") (== [("class","line-block")])
+  ils <- trimInlines . mconcat <$> manyTill inline (pSatisfy (tagClose (=="div")))
+  let lns = map B.fromList $
+            splitWhen (== LineBreak) $ filter (/= SoftBreak) $
+            B.toList ils
+  return $ B.lineBlock lns
+
 pDiv :: PandocMonad m => TagParser m Blocks
 pDiv = try $ do
   guardEnabled Ext_native_divs
@@ -497,14 +510,16 @@ pTable = try $ do
                              [Plain _] -> True
                              _         -> False
   let isSimple = all isSinglePlain $ concat (head':rows''')
-  let cols = length $ if null head' then head rows''' else head'
+  let cols = if null head'
+                then maximum (map length rows''')
+                else length head'
   -- add empty cells to short rows
   let addEmpties r = case cols - length r of
                            n | n > 0 -> r <> replicate n mempty
                              | otherwise -> r
   let rows = map addEmpties rows'''
   let aligns = case rows'' of
-                    (cs:_) -> map fst cs
+                    (cs:_) -> take cols $ map fst cs ++ repeat AlignDefault
                     _      -> replicate cols AlignDefault
   let widths = if null widths'
                   then if isSimple
@@ -520,15 +535,18 @@ pCol = try $ do
   skipMany pBlank
   optional $ pSatisfy (matchTagClose "col")
   skipMany pBlank
-  return $ case lookup "width" attribs of
+  let width = case lookup "width" attribs of
            Nothing -> case lookup "style" attribs of
                Just ('w':'i':'d':'t':'h':':':xs) | '%' `elem` xs ->
-                 fromMaybe 0.0 $ safeRead ('0':'.':filter
+                 fromMaybe 0.0 $ safeRead (filter
                    (`notElem` (" \t\r\n%'\";" :: [Char])) xs)
                _ -> 0.0
            Just x | not (null x) && last x == '%' ->
-             fromMaybe 0.0 $ safeRead ('0':'.':init x)
+             fromMaybe 0.0 $ safeRead (init x)
            _ -> 0.0
+  if width > 0.0
+    then return $ width / 100.0
+    else return 0.0
 
 pColgroup :: PandocMonad m => TagParser m [Double]
 pColgroup = try $ do
@@ -588,8 +606,9 @@ pFigure = try $ do
   skipMany pBlank
   let pImg  = (\x -> (Just x, Nothing)) <$>
                (pOptInTag "p" pImage <* skipMany pBlank)
-      pCapt = (\x -> (Nothing, Just x)) <$>
-               (pInTags "figcaption" inline <* skipMany pBlank)
+      pCapt = (\x -> (Nothing, Just x)) <$> do
+                bs <- pInTags "figcaption" block
+                return $ blocksToInlines' $ B.toList bs
       pSkip = (Nothing, Nothing) <$ pSatisfy (not . matchTagClose "figure")
   res <- many (pImg <|> pCapt <|> pSkip)
   let mbimg = msum $ map fst res
@@ -762,7 +781,7 @@ pCode = try $ do
   (TagOpen open attr') <- pSatisfy $ tagOpen (`elem` ["code","tt"]) (const True)
   let attr = toStringAttr attr'
   result <- manyTill pAnyTag (pCloses open)
-  return $ B.codeWith (mkAttr attr) $ intercalate " " $ lines $ T.unpack $
+  return $ B.codeWith (mkAttr attr) $ unwords $ lines $ T.unpack $
            innerText result
 
 pSpan :: PandocMonad m => TagParser m Inlines
@@ -833,7 +852,7 @@ pInTags' tagtype tagtest parser = try $ do
   pSatisfy (\t -> t ~== TagOpen tagtype [] && tagtest t)
   mconcat <$> manyTill parser (pCloses tagtype <|> eof)
 
--- parses p, preceeded by an optional opening tag
+-- parses p, preceded by an optional opening tag
 -- and followed by an optional closing tags
 pOptInTag :: PandocMonad m => Text -> TagParser m a -> TagParser m a
 pOptInTag tagtype p = try $ do
@@ -1212,7 +1231,7 @@ stripPrefixes = map stripPrefix
 
 stripPrefix :: Tag Text -> Tag Text
 stripPrefix (TagOpen s as) =
-    TagOpen (stripPrefix' s) (map (stripPrefix' *** id) as)
+    TagOpen (stripPrefix' s) (map (first stripPrefix') as)
 stripPrefix (TagClose s) = TagClose (stripPrefix' s)
 stripPrefix x = x
 
@@ -1262,7 +1281,7 @@ instance HasLastStrPosition HTMLState where
   setLastStrPos s st = st {parserState = setLastStrPos s (parserState st)}
   getLastStrPos = getLastStrPos . parserState
 
--- For now we need a special verison here; the one in Shared has String type
+-- For now we need a special version here; the one in Shared has String type
 renderTags' :: [Tag Text] -> Text
 renderTags' = renderTagsOptions
                renderOptions{ optMinimize = matchTags ["hr", "br", "img",

@@ -1,17 +1,19 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Tests.Readers.Muse (tests) where
 
+import Prelude
 import Data.List (intersperse)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Test.Tasty
--- import Test.Tasty.QuickCheck
+import Test.Tasty.QuickCheck
 import Tests.Helpers
 import Text.Pandoc
 import Text.Pandoc.Arbitrary ()
 import Text.Pandoc.Builder
 import Text.Pandoc.Shared (underlineSpan)
--- import Text.Pandoc.Walk (walk)
+import Text.Pandoc.Walk (walk)
 
 amuse :: Text -> Pandoc
 amuse = purely $ readMuse def { readerExtensions = extensionsFromList [Ext_amuse]}
@@ -27,27 +29,25 @@ infix 4 =:
 spcSep :: [Inlines] -> Inlines
 spcSep = mconcat . intersperse space
 
-{-
--- Tables and code blocks don't round-trip yet
-
-removeTables :: Block -> Block
-removeTables (Table{}) = Para [Str "table was here"]
-removeTables x = x
+-- Tables don't round-trip yet
+--
+makeRoundTrip :: Block -> Block
+makeRoundTrip Table{} = Para [Str "table was here"]
+makeRoundTrip (OrderedList (start, LowerAlpha, _) items) = OrderedList (start, Decimal, Period) items
+makeRoundTrip (OrderedList (start, UpperAlpha, _) items) = OrderedList (start, Decimal, Period) items
+makeRoundTrip x = x
 
 -- Demand that any AST produced by Muse reader and written by Muse writer can be read back exactly the same way.
--- Currently we remove code blocks and tables and compare third rewrite to the second.
--- First and second rewrites are not equal yet.
+-- Currently we remove tables and compare first rewrite to the second.
 roundTrip :: Block -> Bool
-roundTrip b = d'' == d'''
-  where d = walk removeTables $ Pandoc nullMeta [b]
+roundTrip b = d' == d''
+  where d = walk makeRoundTrip $ Pandoc nullMeta [b]
         d' = rewrite d
         d'' = rewrite d'
-        d''' = rewrite d''
         rewrite = amuse . T.pack . (++ "\n") . T.unpack .
-                  (purely $ writeMuse def { writerExtensions = extensionsFromList [Ext_amuse]
+                  purely (writeMuse def { writerExtensions = extensionsFromList [Ext_amuse]
                                           , writerWrapText = WrapPreserve
                                           })
--}
 
 tests :: [TestTree]
 tests =
@@ -73,6 +73,10 @@ tests =
       , "Letter before opening *" =:
         "Foo x*bar* baz" =?>
         para "Foo x*bar* baz"
+
+      , "Digit after closing *" =:
+        "Foo *bar*0 baz" =?>
+        para "Foo *bar*0 baz"
 
       , "Emphasis tag" =:
         "<em>Foo bar</em>" =?>
@@ -115,8 +119,14 @@ tests =
 
       , "Linebreak" =: "Line <br>  break" =?> para ("Line" <> linebreak <> "break")
 
-      , test emacsMuse "Non-breaking space"
-        ("Foo~~bar" =?> para "Foo\160bar")
+      , "Trailing whitespace inside paragraph" =:
+        T.unlines [ "First line " -- trailing whitespace here
+                  , "second line"
+                  ]
+        =?> para "First line\nsecond line"
+
+      , "Non-breaking space" =: "Foo~~bar" =?> para "Foo\160bar"
+      , "Single ~" =: "Foo~bar" =?> para "Foo~bar"
 
       , testGroup "Code markup"
         [ "Code" =: "=foo(bar)=" =?> para (code "foo(bar)")
@@ -154,13 +164,26 @@ tests =
                     ] =?>
           para "foo =bar" <>
           para "baz= foo"
+
+        , "Code at the beginning of paragraph but not first column" =:
+          " - =foo=" =?> bulletList [ para $ code "foo" ]
         ]
 
       , "Code tag" =: "<code>foo(bar)</code>" =?> para (code "foo(bar)")
 
+      , "Math tag" =: "<math>\\sum_{i=0}^n i^2</math>" =?> para (math "\\sum_{i=0}^n i^2")
+
       , "Verbatim tag" =: "*<verbatim>*</verbatim>*" =?> para (emph "*")
 
       , "Verbatim inside code" =: "<code><verbatim>foo</verbatim></code>" =?> para (code "<verbatim>foo</verbatim>")
+
+      , "Verbatim tag after text" =: "Foo <verbatim>bar</verbatim>" =?> para "Foo bar"
+
+      , "Class tag" =: "<class name=\"foo\">bar</class>" =?> para (spanWith ("", ["foo"], []) "bar")
+      , "Class tag without name" =: "<class>foobar</class>" =?> para (spanWith ("", [], []) "foobar")
+
+      -- <em> tag should match with the last </em> tag, not verbatim one
+      , "Nested \"</em>\" inside em tag" =: "<em>foo<verbatim></em></verbatim>bar</em>" =?> para (emph "foo</em>bar")
 
       , testGroup "Links"
         [ "Link without description" =:
@@ -169,12 +192,33 @@ tests =
         , "Link with description" =:
           "[[https://amusewiki.org/][A Muse Wiki]]" =?>
           para (link "https://amusewiki.org/" "" (text "A Muse Wiki"))
+        , "Link with empty description" =:
+          "[[https://amusewiki.org/][]]" =?>
+          para (link "https://amusewiki.org/" "" (text ""))
         , "Image" =:
           "[[image.jpg]]" =?>
           para (image "image.jpg" "" mempty)
+        , "Closing bracket is not allowed in image filename" =:
+          "[[foo]bar.jpg]]" =?>
+          para (text "[[foo]bar.jpg]]")
         , "Image with description" =:
           "[[image.jpg][Image]]" =?>
           para (image "image.jpg" "" (text "Image"))
+        , "Image with space in filename" =:
+          "[[image name.jpg]]" =?>
+          para (image "image name.jpg" "" mempty)
+        , "Image with width" =:
+          "[[image.jpg 60]]" =?>
+          para (imageWith ("", [], [("width", "60%")]) "image.jpg" mempty mempty)
+        , "At least one space is required between image filename and width" =:
+          "[[image.jpg60]]" =?>
+          para (link "image.jpg60" mempty (str "image.jpg60"))
+        , "Left-aligned image with width" =:
+          "[[image.png 60 l][Image]]" =?>
+          para (imageWith ("", ["align-left"], [("width", "60%")]) "image.png" "" (str "Image"))
+        , "Right-aligned image with width" =:
+          "[[image.png 60 r][Image]]" =?>
+          para (imageWith ("", ["align-right"], [("width", "60%")]) "image.png" "" (str "Image"))
         , "Image link" =:
           "[[URL:image.jpg]]" =?>
           para (link "image.jpg" "" (str "image.jpg"))
@@ -187,21 +231,25 @@ tests =
         -- This test also makes sure '=' without whitespace is not treated as code markup
         , "No implicit links" =: "http://example.org/index.php?action=view&id=1"
                =?> para "http://example.org/index.php?action=view&id=1"
+        , "Link with empty URL" =: "[[][empty URL]]" =?> para (link "" "" (text "empty URL"))
+        , "No footnotes inside links" =:
+          "[[https://amusewiki.org/][foo[1]]" =?>
+          para (link "https://amusewiki.org/" "" (text "foo[1"))
         ]
 
       , testGroup "Literal"
         [ test emacsMuse "Inline literal"
           ("Foo<literal style=\"html\">lit</literal>bar" =?>
           para (text "Foo" <> rawInline "html" "lit" <> text "bar"))
-        , "No literal in Text::Amuse" =:
-          "Foo<literal style=\"html\">lit</literal>bar" =?>
-          para "Foo<literal style=\"html\">lit</literal>bar"
+        , test emacsMuse "Single inline literal in paragraph"
+          ("<literal style=\"html\">lit</literal>" =?>
+          para (rawInline "html" "lit"))
         ]
       ]
 
-  , testGroup "Blocks"
-      [ -- testProperty "Round trip" roundTrip,
-        "Block elements end paragraphs" =:
+  , testGroup "Blocks" $
+      [ testProperty "Round trip" roundTrip
+      , "Block elements end paragraphs" =:
         T.unlines [ "First paragraph"
                   , "----"
                   , "Second paragraph"
@@ -234,6 +282,12 @@ tests =
         , "Quote" =:
           "  This is a quotation\n" =?>
           blockQuote (para "This is a quotation")
+        , "Indentation does not indicate quote inside quote tag" =:
+          T.unlines [ "<quote>"
+                    , "  Not a nested quote"
+                    , "</quote>"
+                    ] =?>
+          blockQuote (para "Not a nested quote")
         , "Multiline quote" =:
           T.unlines [ "  This is a quotation"
                     , "  with a continuation"
@@ -241,12 +295,35 @@ tests =
           blockQuote (para "This is a quotation\nwith a continuation")
         , testGroup "Div"
           [ "Div without id" =:
-            "<div>Foo bar</div>" =?>
+            T.unlines [ "<div>"
+                      , "Foo bar"
+                      , "</div>"
+                      ] =?>
             divWith nullAttr (para "Foo bar")
           , "Div with id" =:
-            "<div id=\"foo\">Foo bar</div>" =?>
+            T.unlines [ "<div id=\"foo\">"
+                      , "Foo bar"
+                      , "</div>"
+                      ] =?>
             divWith ("foo", [], []) (para "Foo bar")
           ]
+        , "Biblio" =:
+          T.unlines [ "<biblio>"
+                    , ""
+                    , "Author, *Title*, description"
+                    , ""
+                    , "Another author, *Another title*, another description"
+                    , ""
+                    , "</biblio>"
+                    ] =?>
+          divWith ("", ["biblio"], []) (para (text "Author, " <> emph "Title" <> ", description") <>
+                                        para (text "Another author, " <> emph "Another title" <> text ", another description"))
+        , "Play" =:
+          T.unlines [ "<play>"
+                    , "Foo bar"
+                    , "</play>"
+                    ] =?>
+          divWith ("", ["play"], []) (para "Foo bar")
         , "Verse" =:
           T.unlines [ "> This is"
                     , "> First stanza"
@@ -272,7 +349,45 @@ tests =
                     , "\160\160\160is here"
                     ]
         ]
-      , "Quote tag" =: "<quote>Hello, world</quote>" =?> blockQuote (para $ text "Hello, world")
+      , "Verse in list" =: " - > foo" =?> bulletList [ lineBlock [ "foo" ] ]
+      , "Verse line starting with emphasis" =: "> *foo* bar" =?> lineBlock [ emph "foo" <> text " bar" ]
+      , "Multiline verse in list" =:
+        T.unlines [ " - > foo"
+                  , "   > bar"
+                  ] =?>
+        bulletList [ lineBlock [ "foo", "bar" ] ]
+      , "Paragraph after verse in list" =:
+        T.unlines [ " - > foo"
+                  , "   bar"
+                  ] =?>
+        bulletList [ lineBlock [ "foo" ] <> para "bar" ]
+      , "Empty quote tag" =:
+        T.unlines [ "<quote>"
+                  , "</quote>"
+                  ]
+        =?> blockQuote mempty
+      , "Quote tag" =:
+        T.unlines [ "<quote>"
+                  , "Hello, world"
+                  , "</quote>"
+                  ]
+        =?> blockQuote (para $ text "Hello, world")
+      , "Nested quote tag" =:
+        T.unlines [ "<quote>"
+                  , "foo"
+                  , "<quote>"
+                  , "bar"
+                  , "</quote>"
+                  , "baz"
+                  , "</quote>"
+                  ] =?>
+        blockQuote (para "foo" <> blockQuote (para "bar") <> para "baz")
+      , "Indented quote inside list" =:
+        T.unlines [ " -  <quote>"
+                  , "    foo"
+                  , "    </quote>"
+                  ] =?>
+        bulletList [ blockQuote (para "foo") ]
       , "Verse tag" =:
         T.unlines [ "<verse>"
                   , ""
@@ -280,20 +395,18 @@ tests =
                   , "  One two three"
                   , ""
                   , "</verse>"
-                  , "<verse>Foo bar</verse>"
-                  , "<verse>"
-                  , "Foo bar</verse>"
-                  , "<verse>"
-                  , "   Foo</verse>"
                   ] =?>
         lineBlock [ ""
                   , text "Foo bar baz"
                   , text "\160\160One two three"
                   , ""
-                  ] <>
-        lineBlock [ "Foo bar" ] <>
-        lineBlock [ "Foo bar" ] <>
-        lineBlock [ "\160\160\160Foo" ]
+                  ]
+      , "Verse tag with empty line inside" =:
+        T.unlines [ "<verse>"
+                  , ""
+                  , "</verse>"
+                  ] =?>
+        lineBlock [ "" ]
       , testGroup "Example"
         [ "Braces on separate lines" =:
           T.unlines [ "{{{"
@@ -357,6 +470,11 @@ tests =
                     , "   </example>"
                     ] =?>
           bulletList [ codeBlock "foo" ]
+        , "Empty example inside list" =:
+          T.unlines [ " - <example>"
+                    , "   </example>"
+                    ] =?>
+          bulletList [ codeBlock "" ]
         , "Example inside list with empty lines" =:
           T.unlines [ " - <example>"
                     , "   foo"
@@ -409,15 +527,19 @@ tests =
                     , "</literal>"
                     ] =?>
           rawBlock "latex" "\\newpage")
-        , "No literal blocks in Text::Amuse" =:
-          T.unlines [ "<literal style=\"latex\">"
-                    , "\\newpage"
-                    , "</literal>"
-                    ] =?>
-          para "<literal style=\"latex\">\n\\newpage\n</literal>"
         ]
-      , "Center" =: "<center>Hello, world</center>" =?> para (text "Hello, world")
-      , "Right" =: "<right>Hello, world</right>" =?> para (text "Hello, world")
+      , "Center" =:
+        T.unlines [ "<center>"
+                  , "Hello, world"
+                  , "</center>"
+                  ] =?>
+        para (text "Hello, world")
+      , "Right" =:
+        T.unlines [ "<right>"
+                  , "Hello, world"
+                  , "</right>"
+                  ] =?>
+        para (text "Hello, world")
       , testGroup "Comments"
         [ "Comment tag" =: "<comment>\nThis is a comment\n</comment>" =?> (mempty::Blocks)
         , "Line comment" =: "; Comment" =?> (mempty::Blocks)
@@ -425,6 +547,7 @@ tests =
         , "Text after empty comment" =: ";\nfoo" =?> para "foo" -- Make sure we don't consume newline while looking for whitespace
         , "Not a comment (does not start with a semicolon)" =: " ; Not a comment" =?> para (text "; Not a comment")
         , "Not a comment (has no space after semicolon)" =: ";Not a comment" =?> para (text ";Not a comment")
+        , "Not a comment (semicolon not in the first column)" =: " - ; foo" =?> bulletList [para "; foo"]
         ]
       , testGroup "Headers"
         [ "Part" =:
@@ -456,17 +579,38 @@ tests =
                     ] =?>
           blockQuote (para "* Hi")
         , "Headers consume anchors" =:
-          T.unlines [ "** Foo"
+          T.unlines [ "; A comment to make sure anchor is not parsed as a directive"
                     , "#bar"
+                    , "** Foo"
                     ] =?>
           headerWith ("bar",[],[]) 2 "Foo"
         , "Headers don't consume anchors separated with a blankline" =:
-          T.unlines [ "** Foo"
-                    , ""
+          T.unlines [ "; A comment to make sure anchor is not parsed as a directive"
                     , "#bar"
+                    , ""
+                    , "** Foo"
                     ] =?>
-          header 2 "Foo" <>
-          para (spanWith ("bar", [], []) mempty)
+          para (spanWith ("bar", [], []) mempty) <>
+          header 2 "Foo"
+        , "Headers terminate paragraph" =:
+          T.unlines [ "foo"
+                    , "* bar"
+                    ] =?>
+          para "foo" <> header 1 "bar"
+        , "Headers terminate lists" =:
+          T.unlines [ " - foo"
+                    , "* bar"
+                    ] =?>
+          bulletList [ para "foo" ] <>
+          header 1 "bar"
+        , test emacsMuse "Paragraphs terminate Emacs Muse headers"
+          (T.unlines [ "* Foo"
+                    , "bar"
+                    ] =?> header 1 "Foo" <> para "bar")
+        , "Paragraphs don't terminate Text::Amuse headers" =:
+          T.unlines [ "* Foo"
+                    , "bar"
+                    ] =?> header 1 "Foo\nbar"
         ]
       , testGroup "Directives"
         [ "Title" =:
@@ -480,6 +624,21 @@ tests =
         , test emacsMuse "Disable tables"
           ("#disable-tables t" =?>
           Pandoc (setMeta "disable-tables" (MetaInlines $ toList "t") nullMeta) mempty)
+        , "Multiple directives" =:
+          T.unlines [ "#title Document title"
+                    , "#subtitle Document subtitle"
+                    ] =?>
+          Pandoc (setMeta "title" (MetaInlines $ toList "Document title") $
+                  setMeta "subtitle" (MetaInlines $ toList "Document subtitle") nullMeta) mempty
+        , "Multiline directive" =:
+          T.unlines [ "#title Document title"
+                    , "#notes First line"
+                    , "and second line"
+                    , "#author Name"
+                    ] =?>
+          Pandoc (setMeta "title" (MetaInlines $ toList "Document title") $
+                  setMeta "notes" (MetaInlines $ toList "First line\nand second line") $
+                  setMeta "author" (MetaInlines $ toList "Name") nullMeta) mempty
         ]
       , testGroup "Anchors"
         [ "Anchor" =:
@@ -500,6 +659,11 @@ tests =
                     , "#anchor and ends here."
                     ] =?>
           para ("Paragraph starts here\n" <> spanWith ("anchor", [], []) mempty <> "and ends here.")
+        , "Anchor with \"-\"" =:
+          T.unlines [ "; A comment to make sure anchor is not parsed as a directive"
+                    , "#anchor-id Target"
+                    ] =?>
+          para (spanWith ("anchor-id", [], []) mempty <> "Target")
         ]
       , testGroup "Footnotes"
         [ "Simple footnote" =:
@@ -517,6 +681,15 @@ tests =
                     ] =?>
           para (text "Start recursion here" <>
                 note (para "Recursion continues here[1]"))
+        , "Nested footnotes" =:
+          T.unlines [ "Footnote: [1]"
+                    , ""
+                    , "[1] Nested: [2]"
+                    , ""
+                    , "[2] No recursion: [1]"
+                    ] =?>
+          para (text "Footnote: " <>
+                note (para (text "Nested: " <> note (para $ text "No recursion: [1]"))))
         , "No zero footnotes" =:
           T.unlines [ "Here is a footnote[0]."
                     , ""
@@ -538,15 +711,27 @@ tests =
                       , "[1] First footnote paragraph"
                       , ""
                       , "    Second footnote paragraph"
+                      , "with continuation"
+                      , ""
                       , "Not a note"
                       , "[2] Second footnote"
                       ] =?>
             para (text "Multiparagraph" <>
                   note (para "First footnote paragraph" <>
-                        para "Second footnote paragraph") <>
+                        para "Second footnote paragraph\nwith continuation") <>
                   text " footnotes" <>
                   note (para "Second footnote")) <>
             para (text "Not a note")
+
+          -- Verse requires precise indentation, so it is good to test indentation requirements
+          , "Note continuation with verse" =:
+            T.unlines [ "Foo[1]"
+                      , ""
+                      , "[1] Bar"
+                      , ""
+                      , "    > Baz"
+                      ] =?>
+            para ("Foo" <> note (para "Bar" <> lineBlock ["Baz"]))
           , test emacsMuse "Emacs multiparagraph footnotes"
             (T.unlines
               [ "First footnote reference[1] and second footnote reference[2]."
@@ -693,6 +878,18 @@ tests =
                                              , para "Item2"
                                              , para "Item3"
                                              ]
+      , "Ordered list with roman numerals" =:
+        T.unlines
+          [ " i. First"
+          , " ii. Second"
+          , " iii. Third"
+          , " iv. Fourth"
+          ] =?>
+        orderedListWith (1, LowerRoman, Period) [ para "First"
+                                                , para "Second"
+                                                , para "Third"
+                                                , para "Fourth"
+                                                ]
       , "Bullet list with empty items" =:
         T.unlines
           [ " -"
@@ -714,8 +911,48 @@ tests =
                                              , mempty
                                              , para "Item3"
                                              ]
+      , "Bullet list with last item empty" =:
+        T.unlines
+          [ " -"
+          , ""
+          , "foo"
+          ] =?>
+        bulletList [ mempty ] <>
+        para "foo"
       , testGroup "Nested lists"
-        [ "Nested list" =:
+        [ "Nested bullet list" =:
+          T.unlines [ " - Item1"
+                    , "   - Item2"
+                    , "     - Item3"
+                    , "   - Item4"
+                    , "     - Item5"
+                    , " - Item6"
+                    ] =?>
+          bulletList [ para "Item1" <>
+                       bulletList [ para "Item2" <>
+                                    bulletList [ para "Item3" ]
+                                  , para "Item4" <>
+                                    bulletList [ para "Item5" ]
+                                  ]
+                     , para "Item6"
+                     ]
+        , "Nested ordered list" =:
+          T.unlines [ " 1. Item1"
+                    , "    1. Item2"
+                    , "       1. Item3"
+                    , "    2. Item4"
+                    , "       1. Item5"
+                    , " 2. Item6"
+                    ] =?>
+          orderedListWith (1, Decimal, Period) [ para "Item1" <>
+                                                 orderedListWith (1, Decimal, Period) [ para "Item2" <>
+                                                                                        orderedListWith (1, Decimal, Period) [ para "Item3" ]
+                                                                                      , para "Item4" <>
+                                                                                        orderedListWith (1, Decimal, Period) [ para "Item5" ]
+                                                                                      ]
+                                               , para "Item6"
+                                               ]
+        , "Mixed nested list" =:
           T.unlines
             [ " - Item1"
             , "   - Item2"
@@ -737,12 +974,6 @@ tests =
                                                                       ]
                                ]
                      ]
-        , "Incorrectly indented Text::Amuse nested list" =:
-          T.unlines
-            [ " - First item"
-            , "  - Not nested item"
-            ] =?>
-          bulletList [ para "First item", para "Not nested item"]
         , "Text::Amuse includes only one space in list marker" =:
           T.unlines
             [ " -    First item"
@@ -762,6 +993,15 @@ tests =
                               , para "b"
                               , para "c"
                               ]
+                    ]
+      , "List continuation afeter nested list" =:
+         T.unlines
+           [ " - - foo"
+           , ""
+           , "   bar"
+           ] =?>
+         bulletList [ bulletList [ para "foo" ] <>
+                      para "bar"
                     ]
       -- Emacs Muse allows to separate lists with two or more blank lines.
       -- Text::Amuse (Amusewiki engine) always creates a single list as of version 0.82.
@@ -851,6 +1091,54 @@ tests =
             , " - Baz"
             ] =?>
           bulletList [ para "Foo" <> para "bar" ] <> bulletList [ para "Baz" ]
+        , "No blank line after blockquote" =:
+          T.unlines
+            [ " - <quote>"
+            , "   foo"
+            , "   </quote>"
+            , " - bar"
+            ] =?>
+          bulletList [ blockQuote $ para "foo", para "bar" ]
+        , "One blank line after blockquote" =:
+          T.unlines
+            [ " - <quote>"
+            , "   foo"
+            , "   </quote>"
+            , ""
+            , " - bar"
+            ] =?>
+          bulletList [ blockQuote $ para "foo", para "bar" ]
+        , "Two blank lines after blockquote" =:
+          T.unlines
+            [ " - <quote>"
+            , "   foo"
+            , "   </quote>"
+            , ""
+            , ""
+            , " - bar"
+            ] =?>
+          bulletList [ blockQuote $ para "foo" ] <> bulletList [ para "bar" ]
+        , "No blank line after verse" =:
+          T.unlines
+            [ " - > foo"
+            , " - bar"
+            ] =?>
+          bulletList [ lineBlock [ "foo" ], para "bar" ]
+        , "One blank line after verse" =:
+          T.unlines
+            [ " - > foo"
+            , ""
+            , " - bar"
+            ] =?>
+          bulletList [ lineBlock [ "foo" ], para "bar" ]
+        , "Two blank lines after verse" =:
+          T.unlines
+            [ " - > foo"
+            , ""
+            , ""
+            , " - bar"
+            ] =?>
+          bulletList [ lineBlock [ "foo" ] ] <> bulletList [ para "bar" ]
         ]
       -- Test that definition list requires a leading space.
       -- Emacs Muse does not require a space, we follow Amusewiki here.
@@ -885,8 +1173,13 @@ tests =
         definitionList [ ("Bar", [ para "baz" ]) ]
       , "One-line definition list" =: " foo :: bar" =?>
         definitionList [ ("foo", [ para "bar" ]) ]
+      , "Definition list term may include single colon" =:
+        " foo:bar :: baz" =?>
+        definitionList [ ("foo:bar", [ para "baz" ]) ]
       , "Definition list term with emphasis" =: " *Foo* :: bar\n" =?>
         definitionList [ (emph "Foo", [ para "bar" ]) ]
+      , "Definition list term with :: inside code" =: " foo <code> :: </code> :: bar <code> :: </code> baz\n" =?>
+        definitionList [ ("foo " <> code " :: ", [ para $ "bar " <> code " :: " <> " baz" ]) ]
       , "Multi-line definition lists" =:
         T.unlines
           [ " First term :: Definition of first term"
@@ -895,6 +1188,24 @@ tests =
           ] =?>
         definitionList [ ("First term", [ para "Definition of first term\nand its continuation." ])
                        , ("Second term", [ para "Definition of second term." ])
+                       ]
+      , "Definition list with verse" =:
+        T.unlines
+          [ " First term :: Definition of first term"
+          , "  > First verse"
+          , "  > Second line of first verse"
+          , ""
+          , "               > Second verse"
+          , "               > Second line of second verse"
+          ] =?>
+        definitionList [ ("First term", [ para "Definition of first term" <>
+                                          lineBlock [ text "First verse"
+                                                    , text "Second line of first verse"
+                                                    ] <>
+                                          lineBlock [ text "Second verse"
+                                                    , text "Second line of second verse"
+                                                    ]
+                                        ])
                        ]
       , test emacsMuse "Multi-line definition lists from Emacs Muse manual"
         (T.unlines
@@ -921,17 +1232,38 @@ tests =
          definitionList [ ("Term1", [ para "This is a first definition\nAnd it has two lines;\nno, make that three."])
                         , ("Term2", [ para "This is a second definition"])
                         ])
-      -- Emacs Muse creates two separate lists when indentation of items is different.
-      -- We follow Amusewiki and allow different indentation within one list.
-      , "Changing indentation" =:
+      , "One-line nested definition list" =:
+        " Foo :: bar :: baz" =?>
+        definitionList [ ("Foo", [ definitionList [ ("bar", [ para "baz" ])]])]
+      , "Nested definition list" =:
         T.unlines
-          [ " First term :: Definition of first term"
-          , "and its continuation."
-          , "   Second term :: Definition of second term."
-          ] =?>
-        definitionList [ ("First term", [ para "Definition of first term\nand its continuation." ])
-                       , ("Second term", [ para "Definition of second term." ])
+        [ " First :: Second :: Third"
+        , "          Fourth :: Fifth :: Sixth"
+        , " Seventh :: Eighth"
+        ] =?>
+        definitionList [ ("First", [ definitionList [ ("Second", [ para "Third" ]),
+                                                      ("Fourth", [ definitionList [ ("Fifth", [ para "Sixth"] ) ] ] ) ] ] )
+                       , ("Seventh", [ para "Eighth" ])
                        ]
+      , testGroup "Definition lists with multiple descriptions"
+        [ "Correctly indented second description" =:
+          T.unlines
+          [ " First term :: first description"
+          , "  :: second description"
+          ] =?>
+          definitionList [ ("First term", [ para "first description"
+                                          , para "second description"
+                                          ])
+                         ]
+        , "Incorrectly indented second description" =:
+          T.unlines
+          [ " First term :: first description"
+          , " :: second description"
+          ] =?>
+          definitionList [ ("First term", [ para "first description" ])
+                         , ("", [ para "second description" ])
+                         ]
+        ]
       , "Two blank lines separate definition lists" =:
         T.unlines
           [ " First :: list"
@@ -952,7 +1284,21 @@ tests =
                              , para "* Bar"
                              ]
                    ]
-      , "List inside a tag" =:
+      , "Bullet list inside a tag" =:
+        T.unlines
+          [ "<quote>"
+          , " - First"
+          , ""
+          , " - Second"
+          , ""
+          , " - Third"
+          , "</quote>"
+          ] =?>
+        blockQuote (bulletList [ para "First"
+                               , para "Second"
+                               , para "Third"
+                               ])
+      , "Ordered list inside a tag" =:
         T.unlines
           [ "<quote>"
           , " 1. First"
@@ -966,19 +1312,52 @@ tests =
                                                          , para "Second"
                                                          , para "Third"
                                                          ])
-      -- Amusewiki requires block tags to be on separate lines,
-      -- but Emacs Muse allows them to be on the same line as contents.
-      , "List inside an inline tag" =:
+      -- Regression test for a bug caught by round-trip test
+      , "Do not consume whitespace while looking for end tag" =:
         T.unlines
-          [ "<quote> 1. First"
-          , ""
-          , " 2. Second"
-          , ""
-          , " 3. Third</quote>"
+          [ "<quote>"
+          , " - <quote>"
+          , "   foo"
+          , "   </quote>"
+          , " bar" -- Do not consume whitespace while looking for arbitrarily indented </quote>
+          , "</quote>"
           ] =?>
-        blockQuote (orderedListWith (1, Decimal, Period) [ para "First"
-                                                         , para "Second"
-                                                         , para "Third"
-                                                         ])
+        blockQuote (bulletList [ blockQuote $ para "foo" ] <> para "bar")
+
+      , "Unclosed quote tag" =:
+        T.unlines
+          [ "<quote>"
+          , "<verse>"
+          , "</quote>"
+          , "</verse>"
+          ] =?>
+        para "<quote>" <> lineBlock [ "</quote>" ]
+
+      , "Unclosed quote tag inside list" =:
+        T.unlines
+          [ " - <quote>"
+          , "   <verse>"
+          , "   </quote>"
+          , "   </verse>"
+          ] =?>
+        bulletList [ para "<quote>" <> lineBlock [ "</quote>" ] ]
+
+      -- Allowing indented closing tags is dangerous,
+      -- as they may terminate lists
+      , "No indented closing tags" =:
+        T.unlines
+          [ "<quote>"
+          , ""
+          , " - Foo"
+          , ""
+          , "   </quote>"
+          , ""
+          , "   bar"
+          , ""
+          , "   <verse>"
+          , "   </quote>"
+          , "   </verse>"
+          ] =?>
+        para "<quote>" <> bulletList [ para "Foo" <> para "</quote>" <> para "bar" <> lineBlock [ "</quote>" ] ]
       ]
   ]

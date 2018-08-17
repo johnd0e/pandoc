@@ -1,5 +1,6 @@
+{-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE CPP             #-}
 {-# LANGUAGE Arrows          #-}
-
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TupleSections   #-}
 
@@ -57,6 +58,7 @@ module Text.Pandoc.Readers.Odt.StyleReader
 , readStylesAt
 ) where
 
+import Prelude
 import Control.Applicative hiding (liftA, liftA2, liftA3)
 import Control.Arrow
 
@@ -79,7 +81,6 @@ import Text.Pandoc.Readers.Odt.Generic.XMLConverter
 
 import Text.Pandoc.Readers.Odt.Base
 import Text.Pandoc.Readers.Odt.Namespaces
-
 
 readStylesAt :: XML.Element -> Fallible Styles
 readStylesAt e = runConverter' readAllStyles mempty e
@@ -131,14 +132,13 @@ type StyleReaderSafe a b  = XMLReaderSafe FontPitches a b
 -- | A reader for font pitches
 fontPitchReader :: XMLReader _s _x FontPitches
 fontPitchReader = executeIn NsOffice "font-face-decls" (
-                         (  withEveryL NsStyle "font-face" $ liftAsSuccess (
+                          withEveryL NsStyle "font-face" (liftAsSuccess (
                               findAttr' NsStyle "name"
                               &&&
                               lookupDefaultingAttr NsStyle "font-pitch"
-                            )
-                         )
-                    >>?^ ( M.fromList . (foldl accumLegalPitches []) )
-                  )
+                            ))
+                    >>?^ ( M.fromList . foldl accumLegalPitches [] )
+                  ) `ifFailedDo` (returnV (Right M.empty))
   where accumLegalPitches ls (Nothing,_) = ls
         accumLegalPitches ls (Just n,p)  = (n,p):ls
 
@@ -184,13 +184,14 @@ data Styles           = Styles
   deriving ( Show )
 
 -- Styles from a monoid under union
-instance Monoid Styles where
-  mempty  = Styles M.empty M.empty M.empty
-  mappend  (Styles sBn1 dSm1 lsBn1)
-           (Styles sBn2 dSm2 lsBn2)
+instance Semigroup Styles where
+  (Styles sBn1 dSm1 lsBn1) <> (Styles sBn2 dSm2 lsBn2)
           = Styles (M.union sBn1  sBn2)
                    (M.union dSm1  dSm2)
                    (M.union lsBn1 lsBn2)
+instance Monoid Styles where
+  mempty  = Styles M.empty M.empty M.empty
+  mappend = (<>)
 
 -- Not all families from the specifications are implemented, only those we need.
 -- But there are none that are not mentioned here.
@@ -341,7 +342,7 @@ instance Read XslUnit where
   readsPrec _  _   = []
 
 -- | Rough conversion of measures into millimetres.
--- Pixels and em's are actually implementation dependant/relative measures,
+-- Pixels and em's are actually implementation dependent/relative measures,
 -- so I could not really easily calculate anything exact here even if I wanted.
 -- But I do not care about exactness right now, as I only use measures
 -- to determine if a paragraph is "indented" or not.
@@ -383,11 +384,11 @@ data ListLevelStyle = ListLevelStyle { listLevelType  :: ListLevelType
 
 instance Show ListLevelStyle where
   show ListLevelStyle{..} =    "<LLS|"
-                            ++ (show listLevelType)
+                            ++ show listLevelType
                             ++ "|"
-                            ++ (maybeToString listItemPrefix)
-                            ++ (show listItemFormat)
-                            ++ (maybeToString listItemSuffix)
+                            ++ maybeToString listItemPrefix
+                            ++ show listItemFormat
+                            ++ maybeToString listItemSuffix
                             ++ ">"
     where maybeToString = fromMaybe ""
 
@@ -483,14 +484,14 @@ readTextProperties =
     ( liftA6 PropT
        ( searchAttr   NsXSL_FO "font-style"  False isFontEmphasised )
        ( searchAttr   NsXSL_FO "font-weight" False isFontBold       )
-       ( findPitch                                                  )
+       findPitch
        ( getAttr      NsStyle  "text-position"                      )
-       ( readUnderlineMode                                          )
-       ( readStrikeThroughMode                                      )
+       readUnderlineMode
+       readStrikeThroughMode
      )
   where isFontEmphasised = [("normal",False),("italic",True),("oblique",True)]
         isFontBold = ("normal",False):("bold",True)
-                    :(map ((,True).show) ([100,200..900]::[Int]))
+                    :map ((,True).show) ([100,200..900]::[Int])
 
 readUnderlineMode     :: StyleReaderSafe _x (Maybe UnderlineMode)
 readUnderlineMode     = readLineMode "text-underline-mode"
@@ -510,7 +511,7 @@ readLineMode modeAttr styleAttr = proc x -> do
            Nothing -> returnA -< Just UnderlineModeNormal
     else              returnA -< Nothing
   where
-    isLinePresent = [("none",False)] ++ map (,True)
+    isLinePresent = ("none",False) : map (,True)
                     [ "dash"      , "dot-dash" , "dot-dot-dash" , "dotted"
                     , "long-dash" , "solid"    , "wave"
                     ]
@@ -547,20 +548,18 @@ readListStyle =
        findAttr NsStyle "name"
   >>?! keepingTheValue
        ( liftA ListStyle
-         $ ( liftA3 SM.union3
+         $ liftA3 SM.union3
              ( readListLevelStyles NsText "list-level-style-number" LltNumbered )
              ( readListLevelStyles NsText "list-level-style-bullet" LltBullet   )
-             ( readListLevelStyles NsText "list-level-style-image"  LltImage    )
-           ) >>^ M.mapMaybe chooseMostSpecificListLevelStyle
+             ( readListLevelStyles NsText "list-level-style-image"  LltImage    ) >>^ M.mapMaybe chooseMostSpecificListLevelStyle
        )
 --
 readListLevelStyles :: Namespace -> ElementName
                     -> ListLevelType
                     -> StyleReaderSafe _x (SM.SetMap Int ListLevelStyle)
 readListLevelStyles namespace elementName levelType =
-  (     tryAll namespace elementName (readListLevelStyle levelType)
+  tryAll namespace elementName (readListLevelStyle levelType)
     >>^ SM.fromList
-  )
 
 --
 readListLevelStyle :: ListLevelType -> StyleReader _x (Int, ListLevelStyle)
@@ -632,7 +631,7 @@ parents style styles = unfoldr findNextParent style -- Ha!
 getStyleFamily        :: Style       -> Styles -> Maybe StyleFamily
 getStyleFamily style@Style{..} styles
   =     styleFamily
-    <|> (F.asum $ map (`getStyleFamily` styles) $ parents style styles)
+    <|> F.asum (map (`getStyleFamily` styles) $ parents style styles)
 
 -- | Each 'Style' has certain 'StyleProperties'. But sometimes not all property
 -- values are specified. Instead, a value might be inherited from a
@@ -654,7 +653,7 @@ stylePropertyChain style styles
 --
 extendedStylePropertyChain :: [Style] -> Styles -> [StyleProperties]
 extendedStylePropertyChain [] _ = []
-extendedStylePropertyChain [style]       styles =    (stylePropertyChain style styles)
-                                                  ++ (maybeToList (fmap (lookupDefaultStyle' styles) (getStyleFamily style styles)))
-extendedStylePropertyChain (style:trace) styles =    (stylePropertyChain style styles)
-                                                  ++ (extendedStylePropertyChain trace styles)
+extendedStylePropertyChain [style]       styles =    stylePropertyChain style styles
+                                                  ++ maybeToList (fmap (lookupDefaultStyle' styles) (getStyleFamily style styles))
+extendedStylePropertyChain (style:trace) styles =    stylePropertyChain style styles
+                                                  ++ extendedStylePropertyChain trace styles

@@ -1,8 +1,9 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-
 Copyright (C) 2010-2015 Puneeth Chaganti <punchagan@gmail.com>
-              2010-2017 John MacFarlane <jgm@berkeley.edu>
-              2016-2017 Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
+              2010-2018 John MacFarlane <jgm@berkeley.edu>
+              2016-2018 Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -22,8 +23,8 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 {- |
    Module      : Text.Pandoc.Writers.Org
   Copyright    : © 2010-2015 Puneeth Chaganti <punchagan@gmail.com>
-                   2010-2017 John MacFarlane <jgm@berkeley.edu>
-                   2016-2017 Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
+                   2010-2018 John MacFarlane <jgm@berkeley.edu>
+                   2016-2018 Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
    License     : GNU GPL, version 2 or above
 
    Maintainer  : Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
@@ -35,6 +36,7 @@ Conversion of 'Pandoc' documents to Emacs Org-Mode.
 Org-Mode:  <http://orgmode.org>
 -}
 module Text.Pandoc.Writers.Org (writeOrg) where
+import Prelude
 import Control.Monad.State.Strict
 import Data.Char (isAlphaNum, toLower)
 import Data.List (intersect, intersperse, isPrefixOf, partition, transpose)
@@ -166,8 +168,8 @@ blockToOrg (LineBlock lns) = do
         (l, _:r) -> l : splitStanza r
   let joinWithLinefeeds  = nowrap . mconcat . intersperse cr
   let joinWithBlankLines = mconcat . intersperse blankline
-  let prettyfyStanza ls  = joinWithLinefeeds <$> mapM inlineListToOrg ls
-  contents <- joinWithBlankLines <$> mapM prettyfyStanza (splitStanza lns)
+  let prettifyStanza ls  = joinWithLinefeeds <$> mapM inlineListToOrg ls
+  contents <- joinWithBlankLines <$> mapM prettifyStanza (splitStanza lns)
   return $ blankline $$ "#+BEGIN_VERSE" $$
            nest 2 contents $$ "#+END_VERSE" <> blankline
 blockToOrg (RawBlock "html" str) =
@@ -264,7 +266,7 @@ orderedListItemToOrg marker items = do
   contents <- blockListToOrg items
   return $ hang (length marker + 1) (text marker <> space) (contents <> cr)
 
--- | Convert defintion list item (label, list of blocks) to Org.
+-- | Convert definition list item (label, list of blocks) to Org.
 definitionListItemToOrg :: PandocMonad m
                         => ([Inline], [[Block]]) -> Org m Doc
 definitionListItemToOrg (label, defs) = do

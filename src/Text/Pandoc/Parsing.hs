@@ -1,3 +1,5 @@
+{-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE CPP                        #-}
 {-# LANGUAGE ExplicitForAll             #-}
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
@@ -6,7 +8,7 @@
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE TypeSynonymInstances       #-}
 {-
-Copyright (C) 2006-2017 John MacFarlane <jgm@berkeley.edu>
+Copyright (C) 2006-2018 John MacFarlane <jgm@berkeley.edu>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -25,7 +27,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 {- |
    Module      : Text.Pandoc.Parsing
-   Copyright   : Copyright (C) 2006-2017 John MacFarlane
+   Copyright   : Copyright (C) 2006-2018 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -40,6 +42,8 @@ module Text.Pandoc.Parsing ( takeWhileP,
                              anyLineNewline,
                              indentWith,
                              many1Till,
+                             manyUntil,
+                             sepBy1',
                              notFollowedBy',
                              oneOfStrings,
                              oneOfStringsCI,
@@ -65,6 +69,11 @@ module Text.Pandoc.Parsing ( takeWhileP,
                              withRaw,
                              escaped,
                              characterReference,
+                             upperRoman,
+                             lowerRoman,
+                             decimal,
+                             lowerAlpha,
+                             upperAlpha,
                              anyOrderedListMarker,
                              orderedListMarker,
                              charRef,
@@ -126,7 +135,7 @@ module Text.Pandoc.Parsing ( takeWhileP,
                              extractIdClass,
                              insertIncludedFile,
                              insertIncludedFileF,
-                             -- * Re-exports from Text.Pandoc.Parsec
+                             -- * Re-exports from Text.Parsec
                              Stream,
                              runParser,
                              runParserT,
@@ -180,21 +189,22 @@ module Text.Pandoc.Parsing ( takeWhileP,
                              sourceLine,
                              setSourceColumn,
                              setSourceLine,
+                             incSourceColumn,
                              newPos,
                              Line,
                              Column
                              )
 where
 
+import Prelude
 import Control.Monad.Identity
 import Control.Monad.Reader
-import Data.Char (chr, isAlphaNum, isAscii, isAsciiUpper, isHexDigit, isPunctuation, isSpace,
-                  ord, toLower, toUpper)
+import Data.Char (chr, isAlphaNum, isAscii, isAsciiUpper, isHexDigit,
+                  isPunctuation, isSpace, ord, toLower, toUpper)
 import Data.Default
 import Data.List (intercalate, isSuffixOf, transpose)
 import qualified Data.Map as M
-import Data.Maybe (mapMaybe)
-import Data.Monoid ((<>))
+import Data.Maybe (mapMaybe, fromMaybe)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import Text.HTML.TagSoup.Entity (lookupEntity)
@@ -242,10 +252,11 @@ returnF = return . return
 trimInlinesF :: Future s Inlines -> Future s Inlines
 trimInlinesF = liftM trimInlines
 
-instance Monoid a => Monoid (Future s a) where
+instance Semigroup a => Semigroup (Future s a) where
+  (<>) = liftM2 (<>)
+instance (Semigroup a, Monoid a) => Monoid (Future s a) where
   mempty = return mempty
-  mappend = liftM2 mappend
-  mconcat = liftM mconcat . sequence
+  mappend = (<>)
 
 -- | Parse characters while a predicate is true.
 takeWhileP :: Monad m
@@ -303,7 +314,7 @@ indentWith :: Stream s m Char
            => Int -> ParserT s st m [Char]
 indentWith num = do
   tabStop <- getOption readerTabStop
-  if (num < tabStop)
+  if num < tabStop
      then count num (char ' ')
      else choice [ try (count num (char ' '))
                  , try (char '\t' >> indentWith (num - tabStop)) ]
@@ -318,6 +329,28 @@ many1Till p end = do
          first <- p
          rest <- manyTill p end
          return (first:rest)
+
+-- | Like @manyTill@, but also returns the result of end parser.
+manyUntil :: (Stream s m t)
+          => ParserT s u m a
+          -> ParserT s u m b
+          -> ParserT s u m ([a], b)
+manyUntil p end = scan
+  where scan =
+          (do e <- end
+              return ([], e)
+          ) <|>
+          (do x <- p
+              (xs, e) <- scan
+              return (x:xs, e))
+
+-- | Like @sepBy1@ from Parsec,
+-- but does not fail if it @sep@ succeeds and @p@ fails.
+sepBy1' :: (Stream s m t)
+        => ParsecT s u m a
+        -> ParsecT s u m sep
+        -> ParsecT s u m [a]
+sepBy1' p sep = (:) <$> p <*> many (try $ sep >> p)
 
 -- | A more general form of @notFollowedBy@.  This one allows any
 -- type of parser to be specified, and succeeds only if that parser fails.
@@ -481,33 +514,30 @@ charsInBalanced open close parser = try $ do
 
 -- Auxiliary functions for romanNumeral:
 
-lowercaseRomanDigits :: [Char]
-lowercaseRomanDigits = ['i','v','x','l','c','d','m']
-
-uppercaseRomanDigits :: [Char]
-uppercaseRomanDigits = map toUpper lowercaseRomanDigits
-
 -- | Parses a roman numeral (uppercase or lowercase), returns number.
 romanNumeral :: Stream s m Char => Bool                  -- ^ Uppercase if true
              -> ParserT s st m Int
 romanNumeral upperCase = do
-    let romanDigits = if upperCase
-                         then uppercaseRomanDigits
-                         else lowercaseRomanDigits
-    lookAhead $ oneOf romanDigits
-    let [one, five, ten, fifty, hundred, fivehundred, thousand] =
-          map char romanDigits
+    let rchar uc = char $ if upperCase then uc else toLower uc
+    let one         = rchar 'I'
+    let five        = rchar 'V'
+    let ten         = rchar 'X'
+    let fifty       = rchar 'L'
+    let hundred     = rchar 'C'
+    let fivehundred = rchar 'D'
+    let thousand    = rchar 'M'
+    lookAhead $ choice [one, five, ten, fifty, hundred, fivehundred, thousand]
     thousands <- ((1000 *) . length) <$> many thousand
     ninehundreds <- option 0 $ try $ hundred >> thousand >> return 900
-    fivehundreds <- ((500 *) . length) <$> many fivehundred
+    fivehundreds <- option 0 $ 500 <$ fivehundred
     fourhundreds <- option 0 $ try $ hundred >> fivehundred >> return 400
     hundreds <- ((100 *) . length) <$> many hundred
     nineties <- option 0 $ try $ ten >> hundred >> return 90
-    fifties <- ((50 *) . length) <$> many fifty
+    fifties <- option 0 $ (50 <$ fifty)
     forties <- option 0 $ try $ ten >> fifty >> return 40
     tens <- ((10 *) . length) <$> many ten
     nines <- option 0 $ try $ one >> ten >> return 9
-    fives <- ((5 *) . length) <$> many five
+    fives <- option 0 $ (5 <$ five)
     fours <- option 0 $ try $ one >> five >> return 4
     ones <- length <$> many one
     let total = thousands + ninehundreds + fivehundreds + fourhundreds +
@@ -525,8 +555,8 @@ emailAddress :: Stream s m Char => ParserT s st m (String, String)
 emailAddress = try $ toResult <$> mailbox <*> (char '@' *> domain)
  where toResult mbox dom = let full = fromEntities $ mbox ++ '@':dom
                            in  (full, escapeURI $ "mailto:" ++ full)
-       mailbox           = intercalate "." <$> (emailWord `sepby1` dot)
-       domain            = intercalate "." <$> (subdomain `sepby1` dot)
+       mailbox           = intercalate "." <$> (emailWord `sepBy1'` dot)
+       domain            = intercalate "." <$> (subdomain `sepBy1'` dot)
        dot               = char '.'
        subdomain         = many1 $ alphaNum <|> innerPunct
        -- this excludes some valid email addresses, since an
@@ -543,9 +573,6 @@ emailAddress = try $ toResult <$> mailbox <*> (char '@' *> domain)
                               return (x:xs)
        isEmailChar c     = isAlphaNum c || isEmailPunct c
        isEmailPunct c    = c `elem` "!\"#$%&'*+-/=?^_{|}~;"
-       -- note: sepBy1 from parsec consumes input when sep
-       -- succeeds and p fails, so we use this variant here.
-       sepby1 p sep      = (:) <$> p <*> many (try $ sep >> p)
 
 
 uriScheme :: Stream s m Char => ParserT s st m String
@@ -563,7 +590,7 @@ uri = try $ do
   -- http://en.wikipedia.org/wiki/State_of_emergency_(disambiguation)
   -- as a URL, while NOT picking up the closing paren in
   -- (http://wikipedia.org). So we include balanced parens in the URL.
-  let isWordChar c = isAlphaNum c || c `elem` "#$%*+/@\\_-&="
+  let isWordChar c = isAlphaNum c || c `elem` "#$%+/@\\_-&="
   let wordChar = satisfy isWordChar
   let percentEscaped = try $ char '%' >> skipMany1 (satisfy isHexDigit)
   let entity = () <$ characterReference
@@ -572,7 +599,7 @@ uri = try $ do
   let uriChunk =  skipMany1 wordChar
               <|> percentEscaped
               <|> entity
-              <|> (try $ punct >>
+              <|> try (punct >>
                     lookAhead (void (satisfy isWordChar) <|> percentEscaped))
   str <- snd <$> withRaw (skipMany1 ( () <$
                                          (enclosed (char '(') (char ')') uriChunk
@@ -754,7 +781,7 @@ romanOne = (char 'i' >> return (LowerRoman, 1)) <|>
 
 -- | Parses an ordered list marker and returns list attributes.
 anyOrderedListMarker :: Stream s m Char => ParserT s ParserState m ListAttributes
-anyOrderedListMarker = choice $
+anyOrderedListMarker = choice
   [delimParser numParser | delimParser <- [inPeriod, inOneParen, inTwoParens],
                            numParser <- [decimal, exampleNum, defaultNum, romanOne,
                            lowerAlpha, lowerRoman, upperAlpha, upperRoman]]
@@ -895,7 +922,7 @@ widthsFromIndices numColumns' indices =
       quotient = if totLength > numColumns
                    then fromIntegral totLength
                    else fromIntegral numColumns
-      fracs = map (\l -> (fromIntegral l) / quotient) lengths in
+      fracs = map (\l -> fromIntegral l / quotient) lengths in
   tail fracs
 
 ---
@@ -976,7 +1003,7 @@ gridTableHeader headless blocks = try $ do
                     then replicate (length underDashes) ""
                     else map (unlines . map trim) $ transpose
                        $ map (gridTableSplitLine indices) rawContent
-  heads <- fmap sequence $ mapM (parseFromString blocks . trim) rawHeads
+  heads <- sequence <$> mapM (parseFromString blocks . trim) rawHeads
   return (heads, aligns, indices)
 
 gridTableRawLine :: Stream s m Char => [Int] -> ParserT s st m [String]
@@ -1259,7 +1286,7 @@ type SubstTable = M.Map Key Inlines
 --  unique identifier, and update the list of identifiers
 --  in state.  Issue a warning if an explicit identifier
 --  is encountered that duplicates an earlier identifier
---  (explict or automatically generated).
+--  (explicit or automatically generated).
 registerHeader :: (Stream s m a, HasReaderOptions st,
                     HasHeaderMap st, HasLogMessages st, HasIdentifierList st)
                => Attr -> Inlines -> ParserT s st m Attr
@@ -1322,9 +1349,7 @@ failIfInQuoteContext :: (HasQuoteContext st m, Stream s m t)
                      -> ParserT s st m ()
 failIfInQuoteContext context = do
   context' <- getQuoteContext
-  if context' == context
-     then fail "already inside quotes"
-     else return ()
+  when (context' == context) $ fail "already inside quotes"
 
 charOrRef :: Stream s m Char => String -> ParserT s st m Char
 charOrRef cs =
@@ -1338,7 +1363,9 @@ singleQuoteStart = do
   failIfInQuoteContext InSingleQuote
   -- single quote start can't be right after str
   guard =<< notAfterString
-  () <$ charOrRef "'\8216\145"
+  try $ do
+    charOrRef "'\8216\145"
+    notFollowedBy (oneOf [' ', '\t', '\n'])
 
 singleQuoteEnd :: Stream s m Char
                => ParserT s st m ()
@@ -1351,7 +1378,7 @@ doubleQuoteStart :: (HasQuoteContext st m, Stream s m Char)
 doubleQuoteStart = do
   failIfInQuoteContext InDoubleQuote
   try $ do charOrRef "\"\8220\147"
-           notFollowedBy . satisfy $ flip elem [' ', '\t', '\n']
+           notFollowedBy (oneOf [' ', '\t', '\n'])
 
 doubleQuoteEnd :: Stream s m Char
                => ParserT s st m ()
@@ -1412,14 +1439,12 @@ token pp pos match = tokenPrim pp (\_ t _ -> pos t) match
 
 infixr 5 <+?>
 (<+?>) :: (Monoid a) => ParserT s st m a -> ParserT s st m a -> ParserT s st m a
-a <+?> b = a >>= flip fmap (try b <|> return mempty) . (<>)
+a <+?> b = a >>= flip fmap (try b <|> return mempty) . mappend
 
 extractIdClass :: Attr -> Attr
 extractIdClass (ident, cls, kvs) = (ident', cls', kvs')
   where
-    ident' = case lookup "id" kvs of
-               Just v  -> v
-               Nothing -> ident
+    ident' = fromMaybe ident (lookup "id" kvs)
     cls'   = case lookup "class" kvs of
                Just cl -> words cl
                Nothing -> cls

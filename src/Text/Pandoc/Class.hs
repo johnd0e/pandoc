@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE PatternGuards #-}
 {-# LANGUAGE DeriveFunctor #-}
@@ -78,9 +79,10 @@ module Text.Pandoc.Class ( PandocMonad(..)
                          , getResourcePath
                          , PandocIO(..)
                          , PandocPure(..)
-                         , FileTree(..)
+                         , FileTree
                          , FileInfo(..)
                          , addToFileTree
+                         , insertInFileTree
                          , runIO
                          , runIOorExplode
                          , runPure
@@ -95,6 +97,7 @@ module Text.Pandoc.Class ( PandocMonad(..)
                          , Translations
                          ) where
 
+import Prelude
 import Prelude hiding (readFile)
 import System.Random (StdGen, next, mkStdGen)
 import qualified System.Random as IO (newStdGen)
@@ -105,10 +108,11 @@ import Data.List (stripPrefix)
 import qualified Data.Unique as IO (newUnique)
 import qualified Text.Pandoc.UTF8 as UTF8
 import qualified System.Directory as Directory
-import Text.Pandoc.Compat.Time (UTCTime)
+import Data.Time (UTCTime)
 import Text.Pandoc.Logging
+import Text.Pandoc.Shared (uriPathToPath)
 import Text.Parsec (ParsecT, getPosition, sourceLine, sourceName)
-import qualified Text.Pandoc.Compat.Time as IO (getCurrentTime)
+import qualified Data.Time as IO (getCurrentTime)
 import Text.Pandoc.MIME (MimeType, getMimeType, extensionFromMimeType)
 import Text.Pandoc.Definition
 import Data.Digest.Pure.SHA (sha1, showDigest)
@@ -128,7 +132,7 @@ import Network.HTTP.Client.Internal (addProxy)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import System.Environment (getEnv)
 import Network.HTTP.Types.Header ( hContentType )
-import Network (withSocketsDo)
+import Network.Socket (withSocketsDo)
 import Data.ByteString.Lazy (toChunks)
 import qualified Control.Exception as E
 import qualified Data.Time.LocalTime as IO (getCurrentTimeZone)
@@ -141,9 +145,11 @@ import qualified System.Environment as IO (lookupEnv)
 import System.FilePath.Glob (match, compile)
 import System.Directory (createDirectoryIfMissing, getDirectoryContents,
                           doesDirectoryExist)
-import System.FilePath ((</>), (<.>), takeDirectory,
-         takeExtension, dropExtension, isRelative, normalise)
+import System.FilePath
+       ((</>), (<.>), takeDirectory, takeExtension, dropExtension,
+        isRelative, normalise, splitDirectories)
 import qualified System.FilePath.Glob as IO (glob)
+import qualified System.FilePath.Posix as Posix
 import qualified System.Directory as IO (getModificationTime)
 import Control.Monad as M (fail)
 import Control.Monad.State.Strict
@@ -160,8 +166,6 @@ import Text.Pandoc.Translations (Term(..), Translations, lookupTerm,
 import qualified Debug.Trace
 #ifdef EMBED_DATA_FILES
 import Text.Pandoc.Data (dataFiles)
-import qualified System.FilePath.Posix as Posix
-import System.FilePath (splitDirectories)
 #else
 import qualified Paths_pandoc as Paths
 #endif
@@ -474,6 +478,14 @@ liftIOError f u = do
          Left e  -> throwError $ PandocIOError u e
          Right r -> return r
 
+-- | Show potential IO errors to the user continuing execution anyway
+logIOError :: IO () -> PandocIO ()
+logIOError f = do
+  res <- liftIO $ tryIOError f
+  case res of
+    Left e -> report $ IgnoredIOError (E.displayException e)
+    Right _ -> pure ()
+
 instance PandocMonad PandocIO where
   lookupEnv = liftIO . IO.lookupEnv
   getCurrentTime = liftIO IO.getCurrentTime
@@ -587,7 +599,7 @@ downloadOrRead s = do
             -- We don't want to treat C:/ as a scheme:
             Just u' | length (uriScheme u') > 2 -> openURL (show u')
             Just u' | uriScheme u' == "file:" ->
-                 readLocalFile $ dropWhile (=='/') (uriPath u')
+                 readLocalFile $ uriPathToPath (uriPath u')
             _ -> readLocalFile fp -- get from local file system
    where readLocalFile f = do
              resourcePath <- getResourcePath
@@ -620,6 +632,7 @@ getDefaultReferenceDocx = do
                "word/document.xml",
                "word/fontTable.xml",
                "word/footnotes.xml",
+               "word/comments.xml",
                "word/numbering.xml",
                "word/settings.xml",
                "word/webSettings.xml",
@@ -686,8 +699,6 @@ getDefaultReferencePptx = do
               , "ppt/presProps.xml"
               , "ppt/presentation.xml"
               , "ppt/slideLayouts/_rels/slideLayout1.xml.rels"
-              , "ppt/slideLayouts/_rels/slideLayout10.xml.rels"
-              , "ppt/slideLayouts/_rels/slideLayout11.xml.rels"
               , "ppt/slideLayouts/_rels/slideLayout2.xml.rels"
               , "ppt/slideLayouts/_rels/slideLayout3.xml.rels"
               , "ppt/slideLayouts/_rels/slideLayout4.xml.rels"
@@ -696,6 +707,8 @@ getDefaultReferencePptx = do
               , "ppt/slideLayouts/_rels/slideLayout7.xml.rels"
               , "ppt/slideLayouts/_rels/slideLayout8.xml.rels"
               , "ppt/slideLayouts/_rels/slideLayout9.xml.rels"
+              , "ppt/slideLayouts/_rels/slideLayout10.xml.rels"
+              , "ppt/slideLayouts/_rels/slideLayout11.xml.rels"
               , "ppt/slideLayouts/slideLayout1.xml"
               , "ppt/slideLayouts/slideLayout10.xml"
               , "ppt/slideLayouts/slideLayout11.xml"
@@ -711,9 +724,19 @@ getDefaultReferencePptx = do
               , "ppt/slideMasters/slideMaster1.xml"
               , "ppt/slides/_rels/slide1.xml.rels"
               , "ppt/slides/slide1.xml"
+              , "ppt/slides/_rels/slide2.xml.rels"
+              , "ppt/slides/slide2.xml"
               , "ppt/tableStyles.xml"
               , "ppt/theme/theme1.xml"
               , "ppt/viewProps.xml"
+              -- These relate to notes slides.
+              , "ppt/notesMasters/notesMaster1.xml"
+              , "ppt/notesMasters/_rels/notesMaster1.xml.rels"
+              , "ppt/notesSlides/notesSlide1.xml"
+              , "ppt/notesSlides/_rels/notesSlide1.xml.rels"
+              , "ppt/notesSlides/notesSlide2.xml"
+              , "ppt/notesSlides/_rels/notesSlide2.xml.rels"
+              , "ppt/theme/theme2.xml"
               ]
   let toLazy = BL.fromChunks . (:[])
   let pathToEntry path = do
@@ -760,11 +783,6 @@ readDefaultDataFile fname =
   case lookup (makeCanonical fname) dataFiles of
     Nothing       -> throwError $ PandocCouldNotFindDataFileError fname
     Just contents -> return contents
-  where makeCanonical = Posix.joinPath . transformPathParts . splitDirectories
-        transformPathParts = reverse . foldl go []
-        go as     "."  = as
-        go (_:as) ".." = as
-        go as     x    = x : as
 #else
   getDataFileName fname' >>= checkExistence >>= readFileStrict
     where fname' = if fname == "MANUAL.txt" then fname else "data" </> fname
@@ -776,6 +794,13 @@ checkExistence fn = do
      then return fn
      else throwError $ PandocCouldNotFindDataFileError fn
 #endif
+
+makeCanonical :: FilePath -> FilePath
+makeCanonical = Posix.joinPath . transformPathParts . splitDirectories
+ where  transformPathParts = reverse . foldl go []
+        go as     "."  = as
+        go (_:as) ".." = as
+        go as     x    = x : as
 
 withPaths :: PandocMonad m => [FilePath] -> (FilePath -> m a) -> FilePath -> m a
 withPaths [] _ fp = throwError $ PandocResourceNotFound fp
@@ -839,14 +864,14 @@ writeMedia :: FilePath -> MediaBag -> FilePath -> PandocIO ()
 writeMedia dir mediabag subpath = do
   -- we join and split to convert a/b/c to a\b\c on Windows;
   -- in zip containers all paths use /
-  let fullpath = dir </> normalise subpath
+  let fullpath = dir </> unEscapeString (normalise subpath)
   let mbcontents = lookupMedia subpath mediabag
   case mbcontents of
        Nothing -> throwError $ PandocResourceNotFound subpath
        Just (_, bs) -> do
          report $ Extracting fullpath
          liftIOError (createDirectoryIfMissing True) (takeDirectory fullpath)
-         liftIOError (\p -> BL.writeFile p bs) fullpath
+         logIOError $ BL.writeFile fullpath bs
 
 adjustImagePath :: FilePath -> [FilePath] -> Inline -> Inline
 adjustImagePath dir paths (Image attr lab (src, tit))
@@ -857,10 +882,10 @@ adjustImagePath _ _ x = x
 -- of things that would normally be obtained through IO.
 data PureState = PureState { stStdGen     :: StdGen
                            , stWord8Store :: [Word8] -- should be
-                                                     -- inifinite,
+                                                     -- infinite,
                                                      -- i.e. [1..]
                            , stUniqStore  :: [Int] -- should be
-                                                   -- inifinite and
+                                                   -- infinite and
                                                    -- contain every
                                                    -- element at most
                                                    -- once, e.g. [1..]
@@ -909,15 +934,16 @@ data FileInfo = FileInfo { infoFileMTime :: UTCTime
                          }
 
 newtype FileTree = FileTree {unFileTree :: M.Map FilePath FileInfo}
-  deriving (Monoid)
+  deriving (Semigroup, Monoid)
 
 getFileInfo :: FilePath -> FileTree -> Maybe FileInfo
-getFileInfo fp tree = M.lookup fp $ unFileTree tree
+getFileInfo fp tree =
+  M.lookup (makeCanonical fp) (unFileTree tree)
 
 -- | Add the specified file to the FileTree. If file
 -- is a directory, add its contents recursively.
 addToFileTree :: FileTree -> FilePath -> IO FileTree
-addToFileTree (FileTree treemap) fp = do
+addToFileTree tree fp = do
   isdir <- doesDirectoryExist fp
   if isdir
      then do -- recursively add contents of directories
@@ -925,13 +951,17 @@ addToFileTree (FileTree treemap) fp = do
            isSpecial "."  = True
            isSpecial _    = False
        fs <- (map (fp </>) . filter (not . isSpecial)) <$> getDirectoryContents fp
-       foldM addToFileTree (FileTree treemap) fs
+       foldM addToFileTree tree fs
      else do
        contents <- B.readFile fp
        mtime <- IO.getModificationTime fp
-       return $ FileTree $
-                M.insert fp FileInfo{ infoFileMTime = mtime
-                                    , infoFileContents = contents } treemap
+       return $ insertInFileTree fp FileInfo{ infoFileMTime = mtime
+                                            , infoFileContents = contents } tree
+
+-- | Insert an ersatz file into the 'FileTree'.
+insertInFileTree :: FilePath -> FileInfo -> FileTree -> FileTree
+insertInFileTree fp info (FileTree treemap) =
+  FileTree $ M.insert (makeCanonical fp) info treemap
 
 newtype PandocPure a = PandocPure {
   unPandocPure :: ExceptT PandocError

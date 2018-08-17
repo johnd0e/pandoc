@@ -1,7 +1,7 @@
 --[[
 pandoc.lua
 
-Copyright © 2017 Albert Krewinkel
+Copyright © 2017–2018 Albert Krewinkel
 
 Permission to use, copy, modify, and/or distribute this software for any purpose
 with or without fee is hereby granted, provided that the above copyright notice
@@ -20,45 +20,157 @@ THIS SOFTWARE.
 -- Lua functions for pandoc scripts.
 --
 -- @author Albert Krewinkel
--- @copyright © 2017 Albert Krewinkel
+-- @copyright © 2017–2018 Albert Krewinkel
 -- @license MIT
-local M = {
-  _VERSION = "0.3.0"
-}
+local M = {}
 
 local List = require 'pandoc.List'
 
 ------------------------------------------------------------------------
--- The base class for pandoc's AST elements.
--- @type Element
+-- Accessor objects
+--
+-- Create metatables which allow to access numerical indices via accessor
+-- methods.
+-- @section
 -- @local
-local Element = {}
 
---- Create a new element subtype
+--- Create a new indexing function.
+-- @param template function template
+-- @param indices list of indices, starting with the most deeply nested
+-- @return newly created function
 -- @local
-function Element:make_subtype(o)
-  o = o or {}
-  setmetatable(o, self)
-  self.__index = self
-  return o
+function make_indexing_function(template, indices)
+  local loadstring = loadstring or load
+  local bracketed = {}
+  for i = 1, #indices do
+    bracketed[i] = string.format('[%d]', indices[#indices - i + 1])
+  end
+  local fnstr = string.format('return ' .. template, table.concat(bracketed))
+  return assert(loadstring(fnstr))()
 end
 
---- Create a new element given its tag and arguments
+--- Create accessor functions using a function template.
+-- @param fn_template function template in which '%s' is replacd with indices
+-- @param accessors list of accessors
+-- @return mapping from accessor names to accessor functions
 -- @local
-function Element:new(tag, ...)
-  local element = { t = tag }
-  local content = {...}
-  -- special case for unary constructors
-  if #content == 1 then
-    element.c = content[1]
-  -- Don't set 'c' field if no further arguments were given. This is important
-  -- for nullary constructors like `Space` and `HorizontalRule`.
-  elseif #content > 0 then
-    element.c = content
+local function create_accessor_functions (fn_template, accessors)
+  local res = {}
+  function add_accessors(acc, ...)
+    if type(acc) == 'string' then
+      res[acc] = make_indexing_function(fn_template, {...})
+    elseif type(acc) == 'table' and #acc == 0 and next(acc) then
+      local name, substructure = next(acc)
+      res[name] = make_indexing_function(fn_template, {...})
+      add_accessors(substructure, ...)
+    else
+      for i = 1, #(acc or {}) do
+        add_accessors(acc[i], i, ...)
+      end
+    end
   end
-  setmetatable(element, self)
-  self.__index = self
-  return element
+  add_accessors(accessors)
+  return res
+end
+
+--- Create a new table which allows to access numerical indices via accessor
+-- functions.
+-- @local
+local function create_accessor_behavior (tag, accessors)
+  local behavior = {tag = tag}
+  behavior.getters = create_accessor_functions(
+    'function (x) return x.c%s end',
+    accessors
+  )
+  behavior.setters = create_accessor_functions(
+    'function (x, v) x.c%s = v end',
+    accessors
+  )
+  behavior.__index = function(t, k)
+    if getmetatable(t).getters[k] then
+      return getmetatable(t).getters[k](t)
+    elseif k == "t" then
+      return getmetatable(t)["tag"]
+    else
+      return getmetatable(t)[k]
+    end
+  end
+  behavior.__newindex = function(t, k, v)
+    if getmetatable(t).setters[k] then
+      getmetatable(t).setters[k](t, v)
+    else
+      rawset(t, k, v)
+    end
+  end
+  return behavior
+end
+
+
+------------------------------------------------------------------------
+-- The base class for types
+-- @type Type
+-- @local
+local Type = {}
+Type.name = 'Type'
+Type.__index = Type
+Type.behavior = {
+  __type = Type,
+  new = function (obj)
+    obj = obj or {}
+    setmetatable(obj, self)
+    return obj
+  end
+}
+Type.behavior.__index = Type.behavior
+
+--- Set a new behavior for the type, inheriting that of the parent type if none
+--- is specified explicitly
+-- @param behavior the behavior object for this type.
+-- @local
+function Type:set_behavior (behavior)
+  behavior = behavior or {}
+  behavior.__index = rawget(behavior, '__index') or behavior
+  behavior.__type = self
+  if not getmetatable(behavior) and getmetatable(self) then
+    setmetatable(behavior, getmetatable(self).behavior)
+  end
+  self.behavior = behavior
+end
+
+--- Create a new subtype, using the given table as base.
+-- @param name name of the new type
+-- @param[opt] behavior behavioral object for the new type.
+-- @return a new type
+-- @local
+function Type:make_subtype(name, behavior)
+  local newtype = setmetatable({}, self)
+  newtype.name = name
+  newtype.__index = newtype
+  newtype:set_behavior(behavior)
+  return newtype
+end
+
+
+------------------------------------------------------------------------
+-- The base class for pandoc's AST elements.
+-- @type AstElement
+-- @local
+local AstElement = Type:make_subtype 'AstElement'
+AstElement.__call = function(t, ...)
+  local success, ret = pcall(t.new, t, ...)
+  if success then
+    return setmetatable(ret, t.behavior)
+  else
+    error(string.format('Constructor for %s failed: %s\n', t.name, ret))
+  end
+end
+
+--- Make a new subtype which constructs a new value when called.
+-- @local
+function AstElement:make_subtype(...)
+  local newtype = Type.make_subtype(self, ...)
+  newtype.__call = self.__call
+  return newtype
 end
 
 --- Create a new constructor
@@ -67,69 +179,35 @@ end
 -- @param fn Function to be called when constructing a new element
 -- @param accessors names to use as accessors for numerical fields
 -- @return function that constructs a new element
-function Element:create_constructor(tag, fn, accessors)
-  local constr = self:make_subtype({tag = tag, getters = {}, setters = {}})
-
-  -- Add accessors to the metatable
-  if type(accessors) == "string" then
-    constr.getters[accessors] = function(elem)
-      return elem.c
-    end
-    constr.setters[accessors] = function(elem, v)
-      elem.c = v
-    end
-  else
-    for i = 1, #(accessors or {}) do
-      if type(accessors[i]) == "string" then
-        constr.getters[accessors[i]] = function(elem)
-          return elem.c[i]
-        end
-        constr.setters[accessors[i]] = function(elem, v)
-          elem.c[i] = v
-        end
-      else -- only two levels of nesting are supported
-        for k, v in ipairs(accessors[i]) do
-          constr.getters[v] = function(elem)
-            return elem.c[i][k]
-          end
-          constr.setters[v] = function(elem, v)
-            elem.c[i][k] = v
-          end
-        end
-      end
-    end
-  end
-
+function AstElement:create_constructor(tag, fn, accessors)
+  local constr = self:make_subtype(tag, create_accessor_behavior(tag, accessors))
   function constr:new(...)
-    local obj = fn(...)
-    setmetatable(obj, self)
-    self.__index = function(t, k)
-      if getmetatable(t).getters[k] then
-        return getmetatable(t).getters[k](t)
-      elseif k == "t" then
-        return getmetatable(t)["tag"]
-      else
-        return getmetatable(t)[k]
-      end
-    end
-    self.__newindex = function(t, k, v)
-      if getmetatable(t).setters[k] then
-        getmetatable(t).setters[k](t, v)
-      else
-        rawset(t, k, v)
-      end
-    end
-    return obj
+    return setmetatable(fn(...), self.behavior)
   end
   self.constructor = self.constructor or {}
   self.constructor[tag] = constr
   return constr
 end
 
---- Calls the constructor, creating a new element.
+--- Convert AstElement input into a list if necessary.
 -- @local
-function Element.__call(t, ...)
-  return t:new(...)
+local function ensureList (x)
+  if x.tag then
+    -- Lists are not tagged, but all elements are
+    return List:new{x}
+  else
+    return List:new(x)
+  end
+end
+
+--- Ensure a given object is an Inline element, or convert it into one.
+-- @local
+local function ensureInlineList (x)
+  if type(x) == 'string' then
+    return List:new{M.Str(x)}
+  else
+    return ensureList(x)
+  end
 end
 
 ------------------------------------------------------------------------
@@ -140,12 +218,11 @@ end
 -- @function Pandoc
 -- @tparam      {Block,...} blocks      document content
 -- @tparam[opt] Meta        meta        document meta data
-function M.Pandoc(blocks, meta)
-  meta = meta or {}
+M.Pandoc = AstElement:make_subtype'Pandoc'
+function M.Pandoc:new (blocks, meta)
   return {
-    ["blocks"] = List:new(blocks),
-    ["meta"] = meta,
-    ["pandoc-api-version"] = {1,17,0,5},
+    blocks = ensureList(blocks),
+    meta = meta or {},
   }
 end
 
@@ -160,44 +237,38 @@ M.Doc = M.Pandoc
 --- `Meta`.
 -- @function Meta
 -- @tparam meta table table containing document meta information
-M.Meta = {}
-M.Meta.__call = function(t, meta)
-  return setmetatable(meta, t)
-end
-setmetatable(M.Meta, M.Meta)
+M.Meta = AstElement:make_subtype'Meta'
+function M.Meta:new (meta) return meta end
 
 
 ------------------------------------------------------------------------
 -- MetaValue
 -- @section MetaValue
-M.MetaValue = Element:make_subtype{}
-M.MetaValue.__call = function(t, ...)
-  return t:new(...)
-end
+M.MetaValue = AstElement:make_subtype('MetaValue')
+
 --- Meta blocks
 -- @function MetaBlocks
 -- @tparam {Block,...} blocks blocks
+M.MetaBlocks = M.MetaValue:create_constructor(
+  'MetaBlocks',
+  function (content) return ensureList(content) end
+)
 
 --- Meta inlines
 -- @function MetaInlines
 -- @tparam {Inline,...} inlines inlines
+M.MetaInlines = M.MetaValue:create_constructor(
+  'MetaInlines',
+  function (content) return ensureInlineList(content) end
+)
 
 --- Meta list
 -- @function MetaList
 -- @tparam {MetaValue,...} meta_values list of meta values
-M.meta_value_list_types = {
-  "MetaBlocks",
-  "MetaInlines",
-  "MetaList",
-}
-for i = 1, #M.meta_value_list_types do
-  M[M.meta_value_list_types[i]] = M.MetaValue:create_constructor(
-    M.meta_value_list_types[i],
-    function(content)
-      return List:new(content)
-    end
-  )
-end
+M.MetaList = M.MetaValue:create_constructor(
+  'MetaList',
+  function (content) return ensureList(content) end
+)
 
 --- Meta map
 -- @function MetaMap
@@ -228,10 +299,7 @@ end
 -- @section Block
 
 --- Block elements
-M.Block = Element:make_subtype{}
-M.Block.__call = function (t, ...)
-  return t:new(...)
-end
+M.Block = AstElement:make_subtype'Block'
 
 --- Creates a block quote element
 -- @function BlockQuote
@@ -239,17 +307,17 @@ end
 -- @treturn     Block                   block quote element
 M.BlockQuote = M.Block:create_constructor(
   "BlockQuote",
-  function(content) return {c = content} end,
+  function(content) return {c = ensureList(content)} end,
   "content"
 )
 
 --- Creates a bullet (i.e. unordered) list.
 -- @function BulletList
 -- @tparam      {{Block,...},...} content     list of items
--- @treturn     Block block quote element
+-- @treturn     Block                         bullet list element
 M.BulletList = M.Block:create_constructor(
   "BulletList",
-  function(content) return {c = content} end,
+  function(content) return {c = ensureList(content)} end,
   "content"
 )
 
@@ -261,16 +329,16 @@ M.BulletList = M.Block:create_constructor(
 M.CodeBlock = M.Block:create_constructor(
   "CodeBlock",
   function(text, attr) return {c = {attr or M.Attr(), text}} end,
-  {{"identifier", "classes", "attributes"}, "text"}
+  {{attr = {"identifier", "classes", "attributes"}}, "text"}
 )
 
 --- Creates a definition list, containing terms and their explanation.
 -- @function DefinitionList
 -- @tparam      {{{Inline,...},{Block,...}},...} content     list of items
--- @treturn     Block block quote element
+-- @treturn     Block                  definition list element
 M.DefinitionList = M.Block:create_constructor(
   "DefinitionList",
-  function(content) return {c = List:new(content)} end,
+  function(content) return {c = ensureList(content)} end,
   "content"
 )
 
@@ -278,16 +346,16 @@ M.DefinitionList = M.Block:create_constructor(
 -- @function Div
 -- @tparam      {Block,...} content     block content
 -- @tparam[opt] Attr        attr  element attributes
--- @treturn     Block                   code block element
+-- @treturn     Block                   div element
 M.Div = M.Block:create_constructor(
   "Div",
   function(content, attr)
-    return {c = {attr or M.Attr(), List:new(content)}}
+    return {c = {attr or M.Attr(), ensureList(content)}}
   end,
-  {{"identifier", "classes", "attributes"}, "content"}
+  {{attr = {"identifier", "classes", "attributes"}}, "content"}
 )
 
---- Creates a block quote element.
+--- Creates a header element.
 -- @function Header
 -- @tparam      int          level       header level
 -- @tparam      {Inline,...} content     inline content
@@ -296,9 +364,9 @@ M.Div = M.Block:create_constructor(
 M.Header = M.Block:create_constructor(
   "Header",
   function(level, content, attr)
-    return {c = {level, attr or M.Attr(), content}}
+    return {c = {level, attr or M.Attr(), ensureInlineList(content)}}
   end,
-  {"level", {"identifier", "classes", "attributes"}, "content"}
+  {"level", {attr = {"identifier", "classes", "attributes"}}, "content"}
 )
 
 --- Creates a horizontal rule.
@@ -312,10 +380,10 @@ M.HorizontalRule = M.Block:create_constructor(
 --- Creates a line block element.
 -- @function LineBlock
 -- @tparam      {{Inline,...},...} content    inline content
--- @treturn     Block                   block quote element
+-- @treturn     Block                   line block element
 M.LineBlock = M.Block:create_constructor(
   "LineBlock",
-  function(content) return {c = List:new(content)} end,
+  function(content) return {c = ensureList(content)} end,
   "content"
 )
 
@@ -331,33 +399,33 @@ M.Null = M.Block:create_constructor(
 -- @function OrderedList
 -- @tparam      {{Block,...},...} items list items
 -- @param[opt]  listAttributes list parameters
--- @treturn     Block
+-- @treturn     Block  ordered list element
 M.OrderedList = M.Block:create_constructor(
   "OrderedList",
   function(items, listAttributes)
     listAttributes = listAttributes or {1, M.DefaultStyle, M.DefaultDelim}
-    return {c = {listAttributes, List:new(items)}}
+    return {c = {listAttributes, ensureList(items)}}
   end,
-  {{"start", "style", "delimiter"}, "content"}
+  {{listAttributes = {"start", "style", "delimiter"}}, "content"}
 )
 
 --- Creates a para element.
 -- @function Para
 -- @tparam      {Inline,...} content    inline content
--- @treturn     Block                   block quote element
+-- @treturn     Block                   paragraph element
 M.Para = M.Block:create_constructor(
   "Para",
-  function(content) return {c = List:new(content)} end,
+  function(content) return {c = ensureInlineList(content)} end,
   "content"
 )
 
 --- Creates a plain element.
 -- @function Plain
 -- @tparam      {Inline,...} content    inline content
--- @treturn     Block                   block quote element
+-- @treturn     Block                   plain element
 M.Plain = M.Block:create_constructor(
   "Plain",
-  function(content) return {c = List:new(content)} end,
+  function(content) return {c = ensureInlineList(content)} end,
   "content"
 )
 
@@ -365,7 +433,7 @@ M.Plain = M.Block:create_constructor(
 -- @function RawBlock
 -- @tparam      string      format      format of content
 -- @tparam      string      text        string content
--- @treturn     Block                   block quote element
+-- @treturn     Block                   raw block element
 M.RawBlock = M.Block:create_constructor(
   "RawBlock",
   function(format, text) return {c = {format, text}} end,
@@ -379,13 +447,13 @@ M.RawBlock = M.Block:create_constructor(
 -- @tparam      {int,...}    widths     column widths
 -- @tparam      {Block,...}  headers    header row
 -- @tparam      {{Block,...}} rows      table rows
--- @treturn     Block                   block quote element
+-- @treturn     Block                   table element
 M.Table = M.Block:create_constructor(
   "Table",
   function(caption, aligns, widths, headers, rows)
     return {
       c = {
-        List:new(caption),
+        ensureInlineList(caption),
         List:new(aligns),
         List:new(widths),
         List:new(headers),
@@ -402,10 +470,7 @@ M.Table = M.Block:create_constructor(
 -- @section Inline
 
 --- Inline element class
-M.Inline = Element:make_subtype{}
-M.Inline.__call = function (t, ...)
-  return t:new(...)
-end
+M.Inline = AstElement:make_subtype'Inline'
 
 --- Creates a Cite inline element
 -- @function Cite
@@ -415,7 +480,7 @@ end
 M.Cite = M.Inline:create_constructor(
   "Cite",
   function(content, citations)
-    return {c = {List:new(citations), List:new(content)}}
+    return {c = {ensureList(citations), ensureInlineList(content)}}
   end,
   {"citations", "content"}
 )
@@ -428,7 +493,7 @@ M.Cite = M.Inline:create_constructor(
 M.Code = M.Inline:create_constructor(
   "Code",
   function(text, attr) return {c = {attr or M.Attr(), text}} end,
-  {{"identifier", "classes", "attributes"}, "text"}
+  {{attr = {"identifier", "classes", "attributes"}}, "text"}
 )
 
 --- Creates an inline element representing emphasised text.
@@ -437,7 +502,7 @@ M.Code = M.Inline:create_constructor(
 -- @treturn Inline emphasis element
 M.Emph = M.Inline:create_constructor(
   "Emph",
-  function(content) return {c = List:new(content)} end,
+  function(content) return {c = ensureInlineList(content)} end,
   "content"
 )
 
@@ -453,9 +518,9 @@ M.Image = M.Inline:create_constructor(
   function(caption, src, title, attr)
     title = title or ""
     attr = attr or M.Attr()
-    return {c = {attr, List:new(caption), {src, title}}}
+    return {c = {attr, ensureInlineList(caption), {src, title}}}
   end,
-  {{"identifier", "classes", "attributes"}, "caption", {"src", "title"}}
+  {{attr = {"identifier", "classes", "attributes"}}, "caption", {"src", "title"}}
 )
 
 --- Create a LineBreak inline element
@@ -478,9 +543,9 @@ M.Link = M.Inline:create_constructor(
   function(content, target, title, attr)
     title = title or ""
     attr = attr or M.Attr()
-    return {c = {attr, List:new(content), {target, title}}}
+    return {c = {attr, ensureInlineList(content), {target, title}}}
   end,
-  {{"identifier", "classes", "attributes"}, "content", {"target", "title"}}
+  {{attr = {"identifier", "classes", "attributes"}}, "content", {"target", "title"}}
 )
 
 --- Creates a Math element, either inline or displayed.
@@ -519,7 +584,7 @@ M.InlineMath = M.Inline:create_constructor(
 -- @tparam      {Block,...} content     footnote block content
 M.Note = M.Inline:create_constructor(
   "Note",
-  function(content) return {c = List:new(content)} end,
+  function(content) return {c = ensureList(content)} end,
   "content"
 )
 
@@ -530,7 +595,7 @@ M.Note = M.Inline:create_constructor(
 -- @treturn     Inline                  quoted element
 M.Quoted = M.Inline:create_constructor(
   "Quoted",
-  function(quotetype, content) return {c = {quotetype, List:new(content)}} end,
+  function(quotetype, content) return {c = {quotetype, ensureInlineList(content)}} end,
   {"quotetype", "content"}
 )
 --- Creates a single-quoted inline element (DEPRECATED).
@@ -571,7 +636,7 @@ M.RawInline = M.Inline:create_constructor(
 -- @treturn     Inline                  smallcaps element
 M.SmallCaps = M.Inline:create_constructor(
   "SmallCaps",
-  function(content) return {c = List:new(content)} end,
+  function(content) return {c = ensureInlineList(content)} end,
   "content"
 )
 
@@ -599,9 +664,9 @@ M.Space = M.Inline:create_constructor(
 M.Span = M.Inline:create_constructor(
   "Span",
   function(content, attr)
-    return {c = {attr or M.Attr(), List:new(content)}}
+    return {c = {attr or M.Attr(), ensureInlineList(content)}}
   end,
-  {{"identifier", "classes", "attributes"}, "content"}
+  {{attr = {"identifier", "classes", "attributes"}}, "content"}
 )
 
 --- Creates a Str inline element
@@ -620,7 +685,7 @@ M.Str = M.Inline:create_constructor(
 -- @treturn     Inline                  strikeout element
 M.Strikeout = M.Inline:create_constructor(
   "Strikeout",
-  function(content) return {c = List:new(content)} end,
+  function(content) return {c = ensureInlineList(content)} end,
   "content"
 )
 
@@ -630,7 +695,7 @@ M.Strikeout = M.Inline:create_constructor(
 -- @treturn     Inline                  strong element
 M.Strong = M.Inline:create_constructor(
   "Strong",
-  function(content) return {c = List:new(content)} end,
+  function(content) return {c = ensureInlineList(content)} end,
   "content"
 )
 
@@ -640,7 +705,7 @@ M.Strong = M.Inline:create_constructor(
 -- @treturn     Inline                  subscript element
 M.Subscript = M.Inline:create_constructor(
   "Subscript",
-  function(content) return {c = List:new(content)} end,
+  function(content) return {c = ensureInlineList(content)} end,
   "content"
 )
 
@@ -650,21 +715,26 @@ M.Subscript = M.Inline:create_constructor(
 -- @treturn     Inline                  strong element
 M.Superscript = M.Inline:create_constructor(
   "Superscript",
-  function(content) return {c = List:new(content)} end,
+  function(content) return {c = ensureInlineList(content)} end,
   "content"
 )
 
 
 ------------------------------------------------------------------------
--- Helpers
--- @section helpers
+-- Element components
+-- @section components
 
+--- Check if the first element of a pair matches the given value.
+-- @param x  key value to be checked
+-- @return function returning true iff first element of its argument matches x
+-- @local
 local function assoc_key_equals (x)
   return function (y) return y[1] == x end
 end
 
--- Lookup a value in an associative list
+--- Lookup a value in an associative list
 -- @function lookup
+-- @local
 -- @tparam {{key, value},...} alist associative list
 -- @param key key for which the associated value is to be looked up
 local function lookup(alist, key)
@@ -673,6 +743,7 @@ end
 
 --- Return an iterator which returns key-value pairs of an associative list.
 -- @function apairs
+-- @local
 -- @tparam {{key, value},...} alist associative list
 local apairs = function (alist)
   local i = 1
@@ -688,8 +759,9 @@ local apairs = function (alist)
   return nxt, nil, nil
 end
 
--- AttributeList, a metatable to allow table-like access to attribute lists
+--- AttributeList, a metatable to allow table-like access to attribute lists
 -- represented by associative lists.
+-- @local
 local AttributeList = {
   __index = function (t, k)
     if type(k) == "number" then
@@ -715,10 +787,11 @@ local AttributeList = {
   __pairs = apairs
 }
 
--- convert a table to an associative list. The order of key-value pairs in the
+--- Convert a table to an associative list. The order of key-value pairs in the
 -- alist is undefined. The table should either contain no numeric keys or
 -- already be an associative list.
--- @tparam table associative list or table without numeric keys.
+-- @local
+-- @tparam table tbl associative list or table without numeric keys.
 -- @treturn table associative list
 local to_alist = function (tbl)
   if #tbl ~= 0 or next(tbl) == nil then
@@ -735,36 +808,35 @@ local to_alist = function (tbl)
 end
 
 -- Attr
-M.Attr = {}
-M.Attr._field_names = {identifier = 1, classes = 2, attributes = 3}
+
 --- Create a new set of attributes (Attr).
 -- @function Attr
 -- @tparam[opt] string       identifier element identifier
 -- @tparam[opt] {string,...} classes    element classes
 -- @tparam[opt] table        attributes table containing string keys and values
 -- @return element attributes
-M.Attr.__call = function(t, identifier, classes, attributes)
+M.Attr = AstElement:make_subtype'Attr'
+function M.Attr:new (identifier, classes, attributes)
   identifier = identifier or ''
-  classes = List:new(classes or {})
+  classes = ensureList(classes or {})
   attributes = setmetatable(to_alist(attributes or {}), AttributeList)
-  local attr = {identifier, classes, attributes}
-  setmetatable(attr, t)
-  return attr
+  return {identifier, classes, attributes}
 end
-M.Attr.__index = function(t, k)
-  return rawget(t, k) or
-    rawget(t, M.Attr._field_names[k]) or
-    rawget(getmetatable(t), k)
+M.Attr.behavior._field_names = {identifier = 1, classes = 2, attributes = 3}
+M.Attr.behavior.__index = function(t, k)
+  return rawget(t, getmetatable(t)._field_names[k]) or
+    getmetatable(t)[k]
 end
-M.Attr.__newindex = function(t, k, v)
-  if M.Attr._field_names[k] then
-    rawset(t, M.Attr._field_names[k], v)
+M.Attr.behavior.__newindex = function(t, k, v)
+  if getmetatable(t)._field_names[k] then
+    rawset(t, getmetatable(t)._field_names[k], v)
   else
     rawset(t, k, v)
   end
 end
-setmetatable(M.Attr, M.Attr)
 
+-- Citation
+M.Citation = AstElement:make_subtype'Citation'
 
 --- Creates a single citation.
 -- @function Citation
@@ -774,18 +846,14 @@ setmetatable(M.Attr, M.Attr)
 -- @tparam[opt] {Inline,...} suffix   citation suffix
 -- @tparam[opt] int          note_num note number
 -- @tparam[opt] int          hash  hash number
-M.Citation = function(id, mode, prefix, suffix, note_num, hash)
-  prefix = prefix or {}
-  suffix = suffix or {}
-  note_num = note_num or 0
-  hash = hash or 0
+function M.Citation:new (id, mode, prefix, suffix, note_num, hash)
   return {
-    citationId = id,
-    citationPrefix = prefix,
-    citationSuffix = suffix,
-    citationMode = mode,
-    citationNoteNum = note_num,
-    citationHash = hash,
+    id = id,
+    mode = mode,
+    prefix = ensureList(prefix or {}),
+    suffix = ensureList(suffix or {}),
+    note_num = note_num or 0,
+    hash = hash or 0,
   }
 end
 
@@ -868,40 +936,6 @@ M.LowerAlpha = "LowerAlpha"
 --- List are numbered using upper-case alphabetic characters.
 -- @see OrderedList
 M.UpperAlpha = "UpperAlpha"
-
-
-------------------------------------------------------------------------
--- Helper Functions
--- @section helpers
-
---- Use functions defined in the global namespace to create a pandoc filter.
--- All globally defined functions which have names of pandoc elements are
--- collected into a new table.
--- @return A list of filter functions
--- @usage
--- -- within a file defining a pandoc filter:
--- function Str(text)
---   return pandoc.Str(utf8.upper(text))
--- end
---
--- return {pandoc.global_filter()}
--- -- the above is equivallent to
--- -- return {{Str = Str}}
-function M.global_filter()
-  local res = {}
-  function is_filter_function(k)
-    return M.Inline.constructor[k] or
-      M.Block.constructor[k] or
-      k == "Meta" or k == "Doc" or k == "Pandoc" or
-      k == "Block" or k == "Inline"
-  end
-  for k, v in pairs(_G) do
-    if is_filter_function(k) then
-      res[k] = v
-    end
-  end
-  return res
-end
 
 ------------------------------------------------------------------------
 -- Functions which have moved to different modules

@@ -1,5 +1,7 @@
+{-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE CPP #-}
 {-
-  Copyright (C) 2017 Yuchen Pei <me@ypei.me>
+  Copyright (C) 2017-2018 Yuchen Pei <me@ypei.me>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -18,7 +20,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 {- |
    Module      : Text.Pandoc.Readers.Vimwiki
-   Copyright   : Copyright (C) 2017 Yuchen Pei
+   Copyright   : Copyright (C) 2017-2018 Yuchen Pei
    License     : GNU GPL, version 2 or above
 
    Maintainer  : Yuchen Pei <me@ypei.me>
@@ -63,12 +65,12 @@ Conversion of vimwiki text to 'Pandoc' document.
 
 module Text.Pandoc.Readers.Vimwiki ( readVimwiki
                                  ) where
+import Prelude
 import Control.Monad (guard)
 import Control.Monad.Except (throwError)
 import Data.Default
 import Data.List (isInfixOf, isPrefixOf)
 import Data.Maybe
-import Data.Monoid ((<>))
 import Data.Text (Text, unpack)
 import Text.Pandoc.Builder (Blocks, Inlines, fromList, toList, trimInlines)
 import qualified Text.Pandoc.Builder as B (blockQuote, bulletList, code,
@@ -388,9 +390,7 @@ bulletListMarkers = "ul" <$ (char '*' <|> char '-')
 
 orderedListMarkers :: PandocMonad m => VwParser m String
 orderedListMarkers =
-  ("ol" <$choice (orderedListMarker Decimal Period:(($OneParen)
-    <$> orderedListMarker
-    <$> [Decimal, LowerRoman, UpperRoman, LowerAlpha, UpperAlpha])))
+  ("ol" <$choice (orderedListMarker Decimal Period:(($OneParen) . orderedListMarker <$> [Decimal, LowerRoman, UpperRoman, LowerAlpha, UpperAlpha])))
     <|> ("ol" <$ char '#')
 
 --many need trimInlines

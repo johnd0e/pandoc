@@ -1,5 +1,6 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-
-Copyright (C) 2014-2017 Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
+Copyright (C) 2014-2018 Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -20,7 +21,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 {-# LANGUAGE ViewPatterns     #-}
 {- |
    Module      : Text.Pandoc.Readers.Org.DocumentTree
-   Copyright   : Copyright (C) 2014-2017 Albert Krewinkel
+   Copyright   : Copyright (C) 2014-2018 Albert Krewinkel
    License     : GNU GPL, version 2 or above
 
    Maintainer  : Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
@@ -32,11 +33,11 @@ module Text.Pandoc.Readers.Org.DocumentTree
   , headlineToBlocks
   ) where
 
+import Prelude
 import Control.Arrow ((***))
 import Control.Monad (guard, void)
 import Data.Char (toLower, toUpper)
 import Data.List (intersperse)
-import Data.Monoid ((<>))
 import Text.Pandoc.Builder (Blocks, Inlines)
 import Text.Pandoc.Class (PandocMonad)
 import Text.Pandoc.Definition

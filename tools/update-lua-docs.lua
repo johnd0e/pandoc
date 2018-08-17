@@ -25,7 +25,9 @@ end
 
 function Header (el)
   if in_module_section then
-    if el.level == 1 then
+    if el.level == 1 or
+       -- special case for Module pandoc
+       (el.level == 2 and el.identifier == 'helper-functions') then
       in_module_section = false
       return el
     else
@@ -36,7 +38,7 @@ function Header (el)
     return module_blocks{'data/pandoc.lua'}
   elseif el.identifier == "module-pandoc.list" then
     in_module_section = true
-    return module_blocks{'data/List.lua'}
+    return module_blocks{'data/pandoc.List.lua'}
   end
 end
 

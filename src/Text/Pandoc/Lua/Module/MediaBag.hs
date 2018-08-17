@@ -1,5 +1,6 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-
-Copyright © 2017 Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
+Copyright © 2017-2018 Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -17,7 +18,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 -}
 {- |
    Module      : Text.Pandoc.Lua.Module.MediaBag
-   Copyright   : Copyright © 2017 Albert Krewinkel
+   Copyright   : Copyright © 2017-2018 Albert Krewinkel
    License     : GNU GPL, version 2 or above
 
    Maintainer  : Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
@@ -29,14 +30,15 @@ module Text.Pandoc.Lua.Module.MediaBag
   ( pushModule
   ) where
 
+import Prelude
 import Control.Monad (zipWithM_)
 import Data.IORef (IORef, modifyIORef', readIORef)
 import Data.Maybe (fromMaybe)
-import Foreign.Lua (Lua, NumResults, liftIO)
+import Foreign.Lua (Lua, NumResults, Optional, liftIO)
 import Text.Pandoc.Class (CommonState (..), fetchItem, putCommonState,
                           runIOorExplode, setMediaBag)
 import Text.Pandoc.Lua.StackInstances ()
-import Text.Pandoc.Lua.Util (OrNil (toMaybe), addFunction)
+import Text.Pandoc.Lua.Util (addFunction)
 import Text.Pandoc.MIME (MimeType)
 
 import qualified Data.ByteString.Lazy as BL
@@ -57,12 +59,12 @@ pushModule commonState mediaBagRef = do
 
 insertMediaFn :: IORef MB.MediaBag
               -> FilePath
-              -> OrNil MimeType
+              -> Optional MimeType
               -> BL.ByteString
               -> Lua NumResults
-insertMediaFn mbRef fp nilOrMime contents = do
+insertMediaFn mbRef fp optionalMime contents = do
   liftIO . modifyIORef' mbRef $
-    MB.insertMedia fp (toMaybe nilOrMime) contents
+    MB.insertMedia fp (Lua.fromOptional optionalMime) contents
   return 0
 
 lookupMediaFn :: IORef MB.MediaBag

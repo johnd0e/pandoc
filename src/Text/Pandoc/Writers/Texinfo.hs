@@ -1,6 +1,7 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-
-Copyright (C) 2008-2017 John MacFarlane
+Copyright (C) 2008-2018 John MacFarlane
               2012 Peter Wang
 
 This program is free software; you can redistribute it and/or modify
@@ -20,7 +21,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 {- |
    Module      : Text.Pandoc.Writers.Texinfo
-   Copyright   : Copyright (C) 2008-2017 John MacFarlane
+   Copyright   : Copyright (C) 2008-2018 John MacFarlane
                                2012 Peter Wang
    License     : GNU GPL, version 2 or above
 
@@ -31,6 +32,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 Conversion of 'Pandoc' format into Texinfo.
 -}
 module Text.Pandoc.Writers.Texinfo ( writeTexinfo ) where
+import Prelude
 import Control.Monad.Except (throwError)
 import Control.Monad.State.Strict
 import Data.Char (chr, ord)
@@ -54,8 +56,6 @@ import Text.Printf (printf)
 
 data WriterState =
   WriterState { stStrikeout   :: Bool  -- document contains strikeout
-              , stSuperscript :: Bool -- document contains superscript
-              , stSubscript   :: Bool -- document contains subscript
               , stEscapeComma :: Bool -- in a context where we need @comma
               , stIdentifiers :: Set.Set String -- header ids used already
               , stOptions     :: WriterOptions -- writer options
@@ -72,8 +72,7 @@ type TI m = StateT WriterState m
 writeTexinfo :: PandocMonad m => WriterOptions -> Pandoc -> m Text
 writeTexinfo options document =
   evalStateT (pandocToTexinfo options $ wrapTop document)
-  WriterState { stStrikeout = False, stSuperscript = False,
-                stEscapeComma = False, stSubscript = False,
+  WriterState { stStrikeout = False, stEscapeComma = False,
                 stIdentifiers = Set.empty, stOptions = options}
 
 -- | Add a "Top" node around the document, needed by Texinfo.
@@ -100,8 +99,6 @@ pandocToTexinfo options (Pandoc meta blocks) = do
   let context = defField "body" body
               $ defField "toc" (writerTableOfContents options)
               $ defField "titlepage" titlePage
-              $ defField "subscript" (stSubscript st)
-              $ defField "superscript" (stSuperscript st)
               $
         defField "strikeout" (stStrikeout st) metadata
   case writerTemplate options of
@@ -425,14 +422,12 @@ inlineToTexinfo (Strikeout lst) = do
   return $ text "@textstrikeout{" <> contents <> text "}"
 
 inlineToTexinfo (Superscript lst) = do
-  modify $ \st -> st{ stSuperscript = True }
   contents <- inlineListToTexinfo lst
-  return $ text "@textsuperscript{" <> contents <> char '}'
+  return $ text "@sup{" <> contents <> char '}'
 
 inlineToTexinfo (Subscript lst) = do
-  modify $ \st -> st{ stSubscript = True }
   contents <- inlineListToTexinfo lst
-  return $ text "@textsubscript{" <> contents <> char '}'
+  return $ text "@sub{" <> contents <> char '}'
 
 inlineToTexinfo (SmallCaps lst) =
   inlineListToTexinfo lst >>= return . inCmd "sc"
@@ -475,7 +470,7 @@ inlineToTexinfo (Link _ txt (src@('#':_), _)) = do
 inlineToTexinfo (Link _ txt (src, _)) =
   case txt of
         [Str x] | escapeURI x == src ->  -- autolink
-             do return $ text $ "@url{" ++ x ++ "}"
+             return $ text $ "@url{" ++ x ++ "}"
         _ -> do contents <- escapeCommas $ inlineListToTexinfo txt
                 let src1 = stringToTexinfo src
                 return $ text ("@uref{" ++ src1 ++ ",") <> contents <>

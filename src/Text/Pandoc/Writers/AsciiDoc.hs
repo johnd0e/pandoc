@@ -1,6 +1,7 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-
-Copyright (C) 2006-2017 John MacFarlane <jgm@berkeley.edu>
+Copyright (C) 2006-2018 John MacFarlane <jgm@berkeley.edu>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -19,7 +20,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 {- |
    Module      : Text.Pandoc.Writers.AsciiDoc
-   Copyright   : Copyright (C) 2006-2017 John MacFarlane
+   Copyright   : Copyright (C) 2006-2018 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -37,12 +38,14 @@ that it has omitted the construct.
 AsciiDoc:  <http://www.methods.co.nz/asciidoc/>
 -}
 module Text.Pandoc.Writers.AsciiDoc (writeAsciiDoc) where
+import Prelude
 import Control.Monad.State.Strict
 import Data.Aeson (Result (..), Value (String), fromJSON, toJSON)
 import Data.Char (isPunctuation, isSpace)
 import Data.List (intercalate, intersperse, stripPrefix)
 import qualified Data.Map as M
-import Data.Maybe (fromMaybe, isJust)
+import Data.Maybe (fromMaybe, isJust, listToMaybe)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Text.Pandoc.Class (PandocMonad, report)
@@ -60,6 +63,7 @@ data WriterState = WriterState { defListMarker    :: String
                                , orderedListLevel :: Int
                                , bulletListLevel  :: Int
                                , intraword        :: Bool
+                               , autoIds          :: Set.Set String
                                }
 
 -- | Convert Pandoc to AsciiDoc.
@@ -70,6 +74,7 @@ writeAsciiDoc opts document =
     , orderedListLevel = 1
     , bulletListLevel = 1
     , intraword = False
+    , autoIds = Set.empty
     }
 
 type ADW = StateT WriterState
@@ -121,11 +126,16 @@ olMarker = do (start, style', delim) <- anyOrderedListMarker
                           else spaceChar
 
 -- | True if string begins with an ordered list marker
-beginsWithOrderedListMarker :: String -> Bool
-beginsWithOrderedListMarker str =
-  case runParser olMarker defaultParserState "para start" (take 10 str) of
-         Left  _ -> False
-         Right _ -> True
+-- or would be interpreted as an AsciiDoc option command
+needsEscaping :: String -> Bool
+needsEscaping s = beginsWithOrderedListMarker s || isBracketed s
+  where
+    beginsWithOrderedListMarker str =
+      case runParser olMarker defaultParserState "para start" (take 10 str) of
+             Left  _ -> False
+             Right _ -> True
+    isBracketed ('[':cs) = listToMaybe (reverse cs) == Just ']'
+    isBracketed _ = False
 
 -- | Convert Pandoc block element to asciidoc.
 blockToAsciiDoc :: PandocMonad m
@@ -141,8 +151,8 @@ blockToAsciiDoc opts (Para [Image attr alt (src,'f':'i':'g':':':tit)]) =
 blockToAsciiDoc opts (Para inlines) = do
   contents <- inlineListToAsciiDoc opts inlines
   -- escape if para starts with ordered list marker
-  let esc = if beginsWithOrderedListMarker (render Nothing contents)
-               then text "\\"
+  let esc = if needsEscaping (render Nothing contents)
+               then text "{empty}"
                else empty
   return $ esc <> contents <> blankline
 blockToAsciiDoc opts (LineBlock lns) = do
@@ -164,7 +174,11 @@ blockToAsciiDoc opts (Header level (ident,_,_) inlines) = do
   let len = offset contents
   -- ident seem to be empty most of the time and asciidoc will generate them automatically
   -- so lets make them not show up when null
-  let identifier = if null ident then empty else "[[" <> text ident <> "]]"
+  ids <- gets autoIds
+  let autoId = uniqueIdent inlines ids
+  modify $ \st -> st{ autoIds = Set.insert autoId ids }
+  let identifier = if null ident || (isEnabled Ext_auto_identifiers opts && ident == autoId)
+                     then empty else "[[" <> text ident <> "]]"
   let setext = writerSetextHeaders opts
   return
          (if setext
@@ -265,8 +279,7 @@ blockToAsciiDoc opts (OrderedList (_start, sty, _delim) items) = do
   let markers' = map (\m -> if length m < 3
                                then m ++ replicate (3 - length m) ' '
                                else m) markers
-  contents <- mapM (uncurry (orderedListItemToAsciiDoc opts)) $
-              zip markers' items
+  contents <- zipWithM (orderedListItemToAsciiDoc opts) markers' items
   return $ cat contents <> blankline
 blockToAsciiDoc opts (DefinitionList items) = do
   contents <- mapM (definitionListItemToAsciiDoc opts) items
@@ -452,7 +465,7 @@ inlineToAsciiDoc opts (Link _ txt (src, _tit)) = do
               else prefix <> text src <> "[" <> linktext <> "]"
 inlineToAsciiDoc opts (Image attr alternate (src, tit)) = do
 -- image:images/logo.png[Company logo, title="blah"]
-  let txt = if (null alternate) || (alternate == [Str ""])
+  let txt = if null alternate || (alternate == [Str ""])
                then [Str "image"]
                else alternate
   linktext <- inlineListToAsciiDoc opts txt

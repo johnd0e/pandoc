@@ -1,7 +1,9 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# OPTIONS_GHC -Wall #-}
 
 module Main where
 
+import Prelude
 import GHC.IO.Encoding
 import Test.Tasty
 import qualified Tests.Command
@@ -10,6 +12,7 @@ import qualified Tests.Old
 import qualified Tests.Readers.Creole
 import qualified Tests.Readers.Docx
 import qualified Tests.Readers.EPUB
+import qualified Tests.Readers.FB2
 import qualified Tests.Readers.HTML
 import qualified Tests.Readers.JATS
 import qualified Tests.Readers.LaTeX
@@ -33,6 +36,7 @@ import qualified Tests.Writers.Muse
 import qualified Tests.Writers.Native
 import qualified Tests.Writers.Org
 import qualified Tests.Writers.Plain
+import qualified Tests.Writers.Powerpoint
 import qualified Tests.Writers.RST
 import qualified Tests.Writers.TEI
 import Text.Pandoc.Shared (inDirectory)
@@ -57,6 +61,7 @@ tests = testGroup "pandoc tests" [ Tests.Command.tests
           , testGroup "TEI" Tests.Writers.TEI.tests
           , testGroup "Muse" Tests.Writers.Muse.tests
           , testGroup "FB2" Tests.Writers.FB2.tests
+          , testGroup "PowerPoint" Tests.Writers.Powerpoint.tests
           ]
         , testGroup "Readers"
           [ testGroup "LaTeX" Tests.Readers.LaTeX.tests
@@ -71,6 +76,7 @@ tests = testGroup "pandoc tests" [ Tests.Command.tests
           , testGroup "EPUB" Tests.Readers.EPUB.tests
           , testGroup "Muse" Tests.Readers.Muse.tests
           , testGroup "Creole" Tests.Readers.Creole.tests
+          , testGroup "FB2" Tests.Readers.FB2.tests
           ]
         , testGroup "Lua filters" Tests.Lua.tests
         ]

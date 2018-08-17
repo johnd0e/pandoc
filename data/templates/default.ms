@@ -40,6 +40,10 @@ $endif$
 .nr FL \n[LL]
 .\" footnote point size
 .nr FPS (\n[PS] - 2000)
+$if(papersize)$
+.\" paper size
+.ds paper $papersize$
+$endif$
 .\" color used for strikeout
 .defcolor strikecolor rgb 0.7 0.7 0.7
 .\" color for links (rgb)
@@ -86,7 +90,10 @@ $for(author)$
 $author$
 $endfor$
 $if(date)$
-.ND "$date$"
+.AU
+.sp 0.5
+.ft R
+$date$
 $endif$
 $if(abstract)$
 .AB

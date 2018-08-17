@@ -17,9 +17,6 @@
 
 ## macOS
 
-  - You can install pandoc using
-    [homebrew](http://brew.sh): `brew install pandoc`.
-
   - There is a package installer at pandoc's [download page].
     If you later want to uninstall the package, you can do so
     by downloading [this script][uninstaller]
@@ -29,6 +26,12 @@
     pages, for those who prefer not to use the installer.  Simply
     unzip the file and move the binaries and man pages to
     whatever directory you like.
+
+  - Alternatively, you can install pandoc using
+    [homebrew](http://brew.sh): `brew install pandoc`.
+    Note: If you are using macOS < 10.10, this method installs 
+    pandoc from source, so it will take a long time and a lot of 
+    disk space for the ghc compiler and dependent Haskell libraries.
 
   - For PDF output, you'll also need LaTeX.  Because a full [MacTeX]
     installation takes more than a gigabyte of disk space, we recommend
@@ -120,12 +123,12 @@ the last released version.
 
 The easiest way to build pandoc from source is to use [stack]:
 
-1.  Install [stack].
+1.  Install [stack]. Note that Pandoc requires stack >= 1.6.0.
 
 2.  Change to the pandoc source directory and issue the following commands:
 
         stack setup
-        stack install --test
+        stack install
 
     `stack setup` will automatically download the ghc compiler
     if you don't have it.  `stack install` will install the
@@ -137,7 +140,7 @@ The easiest way to build pandoc from source is to use [stack]:
 
 1.  Install the [Haskell platform].  This will give you [GHC] and
     the [cabal-install] build tool.  Note that pandoc requires
-    GHC >= 7.8.
+    GHC >= 7.10.
 
 2.  Update your package database:
 
@@ -145,7 +148,7 @@ The easiest way to build pandoc from source is to use [stack]:
 
 3.  Use `cabal` to install pandoc and its dependencies:
 
-        cabal install pandoc --enable-tests
+        cabal install pandoc
 
     This procedure will install the released version of pandoc,
     which will be downloaded automatically from HackageDB.
@@ -272,6 +275,7 @@ test`.
 To run particular tests (pattern-matching on their names), use
 the `-p` option:
 
+    cabal install pandoc --enable-tests
     cabal test --test-options='-p markdown'
 
 Or with stack:
@@ -330,5 +334,5 @@ To run just the markdown benchmarks:
 [openSUSE]: https://software.opensuse.org/package/pandoc
 [source tarball]: http://hackage.haskell.org/package/pandoc
 [stack]: http://docs.haskellstack.org/en/stable/install_and_upgrade.html
-[cabal-install]: http://hackage.haskell.org/trac/hackage/wiki/CabalInstall
+[cabal-install]: http://hackage.haskell.org/package/cabal-install
 [uninstaller]: https://raw.githubusercontent.com/jgm/pandoc/master/macos/uninstall-pandoc.pl

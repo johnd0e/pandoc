@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-
 Copyright (C) 2015 John MacFarlane <jgm@berkeley.edu>
 
@@ -27,8 +28,10 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 Emoji symbol lookup from canonical string identifier.
 -}
-module Text.Pandoc.Emoji ( emojis ) where
+module Text.Pandoc.Emoji ( emojis, emojiToInline ) where
+import Prelude
 import qualified Data.Map as M
+import Text.Pandoc.Definition (Inline (Span, Str))
 
 emojis :: M.Map String String
 emojis = M.fromList
@@ -903,3 +906,7 @@ emojis = M.fromList
   ,("zero","0\65039\8419")
   ,("zzz","\128164")
   ]
+
+emojiToInline :: String -> Maybe Inline
+emojiToInline emojikey = makeSpan <$> M.lookup emojikey emojis
+  where makeSpan = Span ("", ["emoji"], [("data-emoji", emojikey)]) . (:[]) . Str

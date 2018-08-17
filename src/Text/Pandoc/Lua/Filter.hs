@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE FlexibleContexts #-}
 
 module Text.Pandoc.Lua.Filter ( LuaFilterFunction
@@ -10,7 +11,9 @@ module Text.Pandoc.Lua.Filter ( LuaFilterFunction
                               , blockElementNames
                               , inlineElementNames
                               ) where
+import Prelude
 import Control.Monad (mplus, unless, when, (>=>))
+import Control.Monad.Catch (finally)
 import Text.Pandoc.Definition
 import Data.Foldable (foldrM)
 import Data.Map (Map)
@@ -22,6 +25,7 @@ import Text.Pandoc.Walk (walkM, Walkable)
 import Data.Data (Data, DataType, dataTypeConstrs, dataTypeName, dataTypeOf,
                   showConstr, toConstr, tyconUQname)
 import Text.Pandoc.Lua.StackInstances()
+import Text.Pandoc.Lua.Util (typeCheck)
 
 type FunctionMap = Map String LuaFilterFunction
 
@@ -65,7 +69,7 @@ registerFilterFunction idx = do
 
 elementOrList :: FromLuaStack a => a -> Lua [a]
 elementOrList x = do
-  let topOfStack = Lua.StackIndex (-1)
+  let topOfStack = Lua.stackTop
   elementUnchanged <- Lua.isnil topOfStack
   if elementUnchanged
     then [x] <$ Lua.pop 1
@@ -73,7 +77,9 @@ elementOrList x = do
        mbres <- Lua.peekEither topOfStack
        case mbres of
          Right res -> [res] <$ Lua.pop 1
-         Left _    -> Lua.toList topOfStack <* Lua.pop 1
+         Left _    -> do
+           typeCheck Lua.stackTop Lua.TypeTable
+           Lua.toList topOfStack `finally` Lua.pop 1
 
 -- | Try running a filter for the given element
 tryFilter :: (Data a, FromLuaStack a, ToLuaStack a)
@@ -164,5 +170,3 @@ singleElement x = do
         Lua.throwLuaError $
           "Error while trying to get a filter's return " ++
           "value from lua stack.\n" ++ err
-
-

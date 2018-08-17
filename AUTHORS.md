@@ -1,5 +1,6 @@
 # Contributors
 
+- Anabra
 - Arata Mizuki
 - Aaron Wolen
 - Albert Krewinkel
@@ -10,6 +11,7 @@
 - Alexander Sulfrian
 - Alexander V Vershilov
 - Alfred Wechselberger
+- Anders Waldenborg
 - Andreas Lööw
 - Andrew Dunning
 - Antoine Latter
@@ -49,8 +51,10 @@
 - Emily Eisenberg
 - Eric Kow
 - Eric Seidel
+- Étienne Bersac
 - Felix Yan
 - Florian Eitel
+- Francesco Occhipinti
 - François Gannaz
 - Freiric Barral
 - Freirich Raabe
@@ -68,6 +72,7 @@
 - Henrik Tramberend
 - Henry de Valence
 - Hubert Plociniczak
+- Igor Khorlo
 - Ilya V. Portnov
 - Ivo Clarysse
 - J. Lewis Muir
@@ -83,6 +88,7 @@
 - Jens Getreu
 - Jens Petersen
 - Jesse Rosenthal
+- Joe Hermaszewski
 - Joe Hillenbrand
 - John MacFarlane
 - John Muccigrosso
@@ -129,9 +135,11 @@
 - Nick Bart
 - Nicolas Kaiser
 - Nikolay Yakimov
+- Nokome Bentley
 - Oliver Matthews
 - Ophir Lifshitz
 - Or Neeman
+- OvidiusCicero
 - Pablo Rodríguez
 - Paul Rivier
 - Paulo Tanimoto
@@ -142,11 +150,13 @@
 - Puneeth Chaganti
 - Ralf Stephan
 - Raniere Silva
+- Raymond Ehlers
 - Recai Oktaş
 - Roland Hieber
 - RyanGlScott
 - Sascha Wilde
 - Scott Morrison
+- Sebastian Talmon
 - Sergei Trofimovich
 - Sergey Astanin
 - Shahbaz Youssefi
@@ -182,8 +192,12 @@
 - d-dorazio
 - iandol
 - infinity0x
+- kaizshang91
+- lux-lth
 - lwolfsonkin
 - nkalvi
+- oltolm
+- quasicomputational
 - qerub
 - robabla
 - roblabla
@@ -193,3 +207,4 @@
 - takahashim
 - tgkokk
 - thsutton
+- wiefling

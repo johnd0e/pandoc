@@ -1,8 +1,9 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-
-Copyright (C) 2006-2017 John MacFarlane <jgm@berkeley.edu>
+Copyright (C) 2006-2018 John MacFarlane <jgm@berkeley.edu>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -21,7 +22,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 {- |
    Module      : Text.Pandoc.Readers.RST
-   Copyright   : Copyright (C) 2006-2017 John MacFarlane
+   Copyright   : Copyright (C) 2006-2018 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -31,16 +32,16 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 Conversion from reStructuredText to 'Pandoc' document.
 -}
 module Text.Pandoc.Readers.RST ( readRST ) where
+import Prelude
 import Control.Arrow (second)
 import Control.Monad (forM_, guard, liftM, mplus, mzero, when)
 import Control.Monad.Except (throwError)
 import Control.Monad.Identity (Identity (..))
-import Data.Char (isHexDigit, isSpace, toLower, toUpper)
+import Data.Char (isHexDigit, isSpace, toLower, toUpper, isAlphaNum)
 import Data.List (deleteFirstsBy, elemIndex, intercalate, isInfixOf, isSuffixOf,
                   nub, sort, transpose, union)
 import qualified Data.Map as M
 import Data.Maybe (fromMaybe, isJust)
-import Data.Monoid ((<>))
 import Data.Sequence (ViewR (..), viewr)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -80,7 +81,7 @@ type RSTParser m = ParserT [Char] ParserState m
 ---
 
 bulletListMarkers :: [Char]
-bulletListMarkers = "*+-"
+bulletListMarkers = "*+-•‣⁃"
 
 underlineChars :: [Char]
 underlineChars = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
@@ -352,7 +353,7 @@ singleHeader' :: PandocMonad m => RSTParser m (Inlines, Char)
 singleHeader' = try $ do
   notFollowedBy' whitespace
   lookAhead $ anyLine >> oneOf underlineChars
-  txt <- trimInlines . mconcat <$> many1 (do {notFollowedBy newline; inline})
+  txt <- trimInlines . mconcat <$> many1 (notFollowedBy blankline >> inline)
   pos <- getPosition
   let len = sourceColumn pos - 1
   blankline
@@ -650,11 +651,15 @@ directive' = do
   skipMany spaceChar
   top <- many $ satisfy (/='\n')
              <|> try (char '\n' <*
-                      notFollowedBy' (rawFieldListItem 3) <*
-                      count 3 (char ' ') <*
+                      notFollowedBy' (rawFieldListItem 1) <*
+                      many1 (char ' ') <*
                       notFollowedBy blankline)
   newline
-  fields <- many $ rawFieldListItem 3
+  fields <- do
+    fieldIndent <- length <$> lookAhead (many (char ' '))
+    if fieldIndent == 0
+       then return []
+       else many $ rawFieldListItem fieldIndent
   body <- option "" $ try $ blanklines >> indentedBlock
   optional blanklines
   let body' = body ++ "\n\n"
@@ -972,11 +977,16 @@ extractCaption = do
   legend <- optional blanklines >> (mconcat <$> many block)
   return (capt,legend)
 
--- divide string by blanklines
+-- divide string by blanklines, and surround with
+-- \begin{aligned}...\end{aligned} if needed.
 toChunks :: String -> [String]
 toChunks = dropWhile null
-           . map (trim . unlines)
+           . map (addAligned . trim . unlines)
            . splitBy (all (`elem` (" \t" :: String))) . lines
+  -- we put this in an aligned environment if it contains \\, see #4254
+  where addAligned s = if "\\\\" `isInfixOf` s
+                          then "\\begin{aligned}\n" ++ s ++ "\n\\end{aligned}"
+                          else s
 
 codeblock :: [String] -> Maybe String -> String -> String -> RSTParser m Blocks
 codeblock classes numberLines lang body =
@@ -1080,10 +1090,15 @@ targetURI :: Monad m => ParserT [Char] st m [Char]
 targetURI = do
   skipSpaces
   optional newline
-  contents <- many1 (try (many spaceChar >> newline >>
-                          many1 spaceChar >> noneOf " \t\n") <|> noneOf "\n")
+  contents <- trim <$>
+     many1 (satisfy (/='\n')
+     <|> try (newline >> many1 spaceChar >> noneOf " \t\n"))
   blanklines
-  return $ escapeURI $ trim contents
+  case reverse contents of
+       -- strip backticks
+       '_':'`':xs -> return (dropWhile (=='`') (reverse xs) ++ "_")
+       '_':_      -> return contents
+       _          -> return (escapeURI contents)
 
 substKey :: PandocMonad m => RSTParser m ()
 substKey = try $ do
@@ -1157,9 +1172,19 @@ anchor = try $ do
   refs <- referenceNames
   blanklines
   b <- block
-  -- put identifier on next block:
   let addDiv ref = B.divWith (ref, [], [])
-  return $ foldr addDiv b refs
+  let emptySpanWithId id' = Span (id',[],[]) []
+  -- put identifier on next block:
+  case B.toList b of
+       [Header lev (_,classes,kvs) txt] ->
+         case reverse refs of
+              [] -> return b
+              (r:rs) -> return $ B.singleton $
+                           Header lev (r,classes,kvs)
+                             (txt ++ map emptySpanWithId rs)
+                -- we avoid generating divs for headers,
+                -- because it hides them from promoteHeader, see #4240
+       _ -> return $ foldr addDiv b refs
 
 headerBlock :: PandocMonad m => RSTParser m [Char]
 headerBlock = do
@@ -1248,7 +1273,7 @@ simpleTableHeader headless = try $ do
   let rawHeads = if headless
                     then replicate (length dashes) ""
                     else simpleTableSplitLine indices rawContent
-  heads <- mapM ( (parseFromString' (mconcat <$> many plain)) . trim) rawHeads
+  heads <- mapM ( parseFromString' (mconcat <$> many plain) . trim) rawHeads
   return (heads, aligns, indices)
 
 -- Parse a simple table.
@@ -1288,19 +1313,24 @@ table = gridTable False <|> simpleTable False <|>
 
 inline :: PandocMonad m => RSTParser m Inlines
 inline = choice [ note          -- can start with whitespace, so try before ws
-                , whitespace
                 , link
-                , str
                 , endline
                 , strong
                 , emph
                 , code
                 , subst
                 , interpretedRole
-                , smart
-                , hyphens
-                , escapedChar
-                , symbol ] <?> "inline"
+                , inlineContent ] <?> "inline"
+
+-- strings, spaces and other characters that can appear either by
+-- themselves or within inline markup
+inlineContent :: PandocMonad m => RSTParser m Inlines
+inlineContent = choice [ whitespace
+                       , str
+                       , smart
+                       , hyphens
+                       , escapedChar
+                       , symbol ] <?> "inline content"
 
 parseInlineFromString :: PandocMonad m => String -> RSTParser m Inlines
 parseInlineFromString = parseFromString' (trimInlines . mconcat <$> many inline)
@@ -1343,11 +1373,11 @@ atStart p = do
 
 emph :: PandocMonad m => RSTParser m Inlines
 emph = B.emph . trimInlines . mconcat <$>
-         enclosed (atStart $ char '*') (char '*') inline
+         enclosed (atStart $ char '*') (char '*') inlineContent
 
 strong :: PandocMonad m => RSTParser m Inlines
 strong = B.strong . trimInlines . mconcat <$>
-          enclosed (atStart $ string "**") (try $ string "**") inline
+          enclosed (atStart $ string "**") (try $ string "**") inlineContent
 
 -- Note, this doesn't precisely implement the complex rule in
 -- http://docutils.sourceforge.net/docs/ref/rst/restructuredtext.html#inline-markup-recognition-rules
@@ -1355,7 +1385,6 @@ strong = B.strong . trimInlines . mconcat <$>
 --
 -- TODO:
 --  - Classes are silently discarded in addNewRole
---  - Lacks sensible implementation for title-reference (which is the default)
 --  - Allows direct use of the :raw: role, rST only allows inherited use.
 interpretedRole :: PandocMonad m => RSTParser m Inlines
 interpretedRole = try $ do
@@ -1365,12 +1394,12 @@ interpretedRole = try $ do
 renderRole :: PandocMonad m
            => String -> Maybe String -> String -> Attr -> RSTParser m Inlines
 renderRole contents fmt role attr = case role of
-    "sup"  -> return $ B.superscript $ B.str contents
-    "superscript" -> return $ B.superscript $ B.str contents
-    "sub"  -> return $ B.subscript $ B.str contents
-    "subscript"  -> return $ B.subscript $ B.str contents
-    "emphasis" -> return $ B.emph $ B.str contents
-    "strong" -> return $ B.strong $ B.str contents
+    "sup"  -> return $ B.superscript $ treatAsText contents
+    "superscript" -> return $ B.superscript $ treatAsText contents
+    "sub"  -> return $ B.subscript $ treatAsText contents
+    "subscript"  -> return $ B.subscript $ treatAsText contents
+    "emphasis" -> return $ B.emph $ treatAsText contents
+    "strong" -> return $ B.strong $ treatAsText contents
     "rfc-reference" -> return $ rfcLink contents
     "RFC" -> return $ rfcLink contents
     "pep-reference" -> return $ pepLink contents
@@ -1381,7 +1410,7 @@ renderRole contents fmt role attr = case role of
     "title" -> titleRef contents
     "t" -> titleRef contents
     "code" -> return $ B.codeWith (addClass "sourceCode" attr) contents
-    "span" -> return $ B.spanWith attr $ B.str contents
+    "span" -> return $ B.spanWith attr $ treatAsText contents
     "raw" -> return $ B.rawInline (fromMaybe "" fmt) contents
     custom -> do
         customRoles <- stateRstCustomRoles <$> getState
@@ -1389,17 +1418,23 @@ renderRole contents fmt role attr = case role of
             Just (newRole, newFmt, newAttr) ->
                 renderRole contents newFmt newRole newAttr
             Nothing -> -- undefined role
-                return $ B.spanWith ("",[],[("role",role)]) (B.str contents)
+                return $ B.codeWith ("",["interpreted-text"],[("role",role)])
+                          contents
  where
-   titleRef ref = return $ B.str ref -- FIXME: Not a sensible behaviour
+   titleRef ref = return $ B.spanWith ("",["title-ref"],[]) $ treatAsText ref
    rfcLink rfcNo = B.link rfcUrl ("RFC " ++ rfcNo) $ B.str ("RFC " ++ rfcNo)
      where rfcUrl = "http://www.faqs.org/rfcs/rfc" ++ rfcNo ++ ".html"
    pepLink pepNo = B.link pepUrl ("PEP " ++ pepNo) $ B.str ("PEP " ++ pepNo)
      where padNo = replicate (4 - length pepNo) '0' ++ pepNo
            pepUrl = "http://www.python.org/dev/peps/pep-" ++ padNo ++ "/"
+   treatAsText = B.text . handleEscapes
+   handleEscapes [] = []
+   handleEscapes ('\\':' ':cs) = handleEscapes cs
+   handleEscapes ('\\':c:cs) = c : handleEscapes cs
+   handleEscapes (c:cs) = c : handleEscapes cs
 
 addClass :: String -> Attr -> Attr
-addClass c (ident, classes, keyValues) = (ident, union classes [c], keyValues)
+addClass c (ident, classes, keyValues) = (ident, classes `union` [c], keyValues)
 
 roleName :: PandocMonad m => RSTParser m String
 roleName = many1 (letter <|> char '-')
@@ -1420,7 +1455,18 @@ roleAfter = try $ do
   return (role,contents)
 
 unmarkedInterpretedText :: PandocMonad m => RSTParser m [Char]
-unmarkedInterpretedText = enclosed (atStart $ char '`') (char '`') anyChar
+unmarkedInterpretedText = try $ do
+  atStart (char '`')
+  contents <- mconcat <$> (many1
+       (  many1 (noneOf "`\\\n")
+      <|> (char '\\' >> ((\c -> ['\\',c]) <$> noneOf "\n"))
+      <|> (string "\n" <* notFollowedBy blankline)
+      <|> try (string "`" <*
+                notFollowedBy (() <$ roleMarker) <*
+                lookAhead (satisfy isAlphaNum))
+       ))
+  char '`'
+  return contents
 
 whitespace :: PandocMonad m => RSTParser m Inlines
 whitespace = B.space <$ skipMany1 spaceChar <?> "whitespace"
@@ -1439,7 +1485,7 @@ endline = try $ do
   notFollowedBy blankline
   -- parse potential list-starts at beginning of line differently in a list:
   st <- getState
-  when ((stateParserContext st) == ListItemState) $ notFollowedBy (anyOrderedListMarker >> spaceChar) >>
+  when (stateParserContext st == ListItemState) $ notFollowedBy (anyOrderedListMarker >> spaceChar) >>
           notFollowedBy' bulletListStart
   return B.softbreak
 
@@ -1455,7 +1501,7 @@ explicitLink = try $ do
   char '`'
   notFollowedBy (char '`') -- `` marks start of inline code
   label' <- trimInlines . mconcat <$>
-             manyTill (notFollowedBy (char '`') >> inline) (char '<')
+             manyTill (notFollowedBy (char '`') >> inlineContent) (char '<')
   src <- trim <$> manyTill (noneOf ">\n") (char '>')
   skipSpaces
   string "`_"
@@ -1562,7 +1608,7 @@ note = try $ do
       -- not yet in this implementation.
       updateState $ \st -> st{ stateNotes = [] }
       contents <- parseFromString' parseBlocks raw
-      let newnotes = if (ref == "*" || ref == "#") -- auto-numbered
+      let newnotes = if ref == "*" || ref == "#" -- auto-numbered
                         -- delete the note so the next auto-numbered note
                         -- doesn't get the same contents:
                         then deleteFirstsBy (==) notes [(ref,raw)]

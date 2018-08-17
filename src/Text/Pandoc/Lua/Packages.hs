@@ -1,5 +1,6 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-
-Copyright © 2017 Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
+Copyright © 2017-2018 Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -19,7 +20,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 {-# LANGUAGE FlexibleContexts #-}
 {- |
    Module      : Text.Pandoc.Lua.Packages
-   Copyright   : Copyright © 2017 Albert Krewinkel
+   Copyright   : Copyright © 2017-2018 Albert Krewinkel
    License     : GNU GPL, version 2 or above
 
    Maintainer  : Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
@@ -32,6 +33,7 @@ module Text.Pandoc.Lua.Packages
   , installPandocPackageSearcher
   ) where
 
+import Prelude
 import Control.Monad (forM_)
 import Data.ByteString.Char8 (unpack)
 import Data.IORef (IORef)
@@ -78,7 +80,8 @@ pandocPackageSearcher luaPkgParams pkgName =
     "pandoc.mediabag" -> let st    = luaPkgCommonState luaPkgParams
                              mbRef = luaPkgMediaBag luaPkgParams
                          in pushWrappedHsFun (MediaBag.pushModule st mbRef)
-    "pandoc.utils"    -> pushWrappedHsFun Utils.pushModule
+    "pandoc.utils"    -> let datadirMb = luaPkgDataDir luaPkgParams
+                         in pushWrappedHsFun (Utils.pushModule datadirMb)
     _ -> searchPureLuaLoader
  where
   pushWrappedHsFun f = do
@@ -112,4 +115,3 @@ dataDirScript datadir moduleFile = do
   return $ case res of
     Left _ -> Nothing
     Right s -> Just (unpack s)
-

@@ -1,6 +1,7 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE DeriveDataTypeable   #-}
 {-# LANGUAGE FlexibleInstances    #-}
-{- Copyright (C) 2012-2017 John MacFarlane <jgm@berkeley.edu>
+{- Copyright (C) 2012-2018 John MacFarlane <jgm@berkeley.edu>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -19,7 +20,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 {- |
    Module      : Text.Pandoc.Writers.Custom
-   Copyright   : Copyright (C) 2012-2017 John MacFarlane
+   Copyright   : Copyright (C) 2012-2018 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -30,6 +31,7 @@ Conversion of 'Pandoc' documents to custom markup using
 a lua writer.
 -}
 module Text.Pandoc.Writers.Custom ( writeCustom ) where
+import Prelude
 import Control.Arrow ((***))
 import Control.Exception
 import Control.Monad (when)
@@ -44,9 +46,9 @@ import Foreign.Lua.Api
 import Text.Pandoc.Class (PandocIO)
 import Text.Pandoc.Definition
 import Text.Pandoc.Error
-import Text.Pandoc.Lua.Init (runPandocLua)
+import Text.Pandoc.Lua.Init (runPandocLua, registerScriptPath)
 import Text.Pandoc.Lua.StackInstances ()
-import Text.Pandoc.Lua.Util (addValue, dostring')
+import Text.Pandoc.Lua.Util (addField, addValue, dostring')
 import Text.Pandoc.Options
 import Text.Pandoc.Templates
 import qualified Text.Pandoc.UTF8 as UTF8
@@ -80,12 +82,21 @@ instance ToLuaStack (Stringify MetaValue) where
 instance ToLuaStack (Stringify Citation) where
   push (Stringify cit) = do
     createtable 6 0
-    addValue "citationId" $ citationId cit
-    addValue "citationPrefix" . Stringify $ citationPrefix cit
-    addValue "citationSuffix" . Stringify $ citationSuffix cit
-    addValue "citationMode" $ show (citationMode cit)
-    addValue "citationNoteNum" $ citationNoteNum cit
-    addValue "citationHash" $ citationHash cit
+    addField "citationId" $ citationId cit
+    addField "citationPrefix" . Stringify $ citationPrefix cit
+    addField "citationSuffix" . Stringify $ citationSuffix cit
+    addField "citationMode" $ show (citationMode cit)
+    addField "citationNoteNum" $ citationNoteNum cit
+    addField "citationHash" $ citationHash cit
+
+-- | Key-value pair, pushed as a table with @a@ as the only key and @v@ as the
+-- associated value.
+newtype KeyValue a b = KeyValue (a, b)
+
+instance (ToLuaStack a, ToLuaStack b) => ToLuaStack (KeyValue a b) where
+  push (KeyValue (k, v)) = do
+    newtable
+    addValue k v
 
 data PandocLuaException = PandocLuaException String
     deriving (Show, Typeable)
@@ -97,13 +108,13 @@ writeCustom :: FilePath -> WriterOptions -> Pandoc -> PandocIO Text
 writeCustom luaFile opts doc@(Pandoc meta _) = do
   luaScript <- liftIO $ UTF8.readFile luaFile
   res <- runPandocLua $ do
+    registerScriptPath luaFile
     stat <- dostring' luaScript
     -- check for error in lua script (later we'll change the return type
     -- to handle this more gracefully):
     when (stat /= OK) $
-      tostring 1 >>= throw . PandocLuaException . UTF8.toString
-    call 0 0
-  -- TODO - call hierarchicalize, so we have that info
+      tostring (-1) >>= throw . PandocLuaException . UTF8.toString
+    -- TODO - call hierarchicalize, so we have that info
     rendered <- docToCustom opts doc
     context <- metaToJSON opts
                blockListToCustom
@@ -166,7 +177,8 @@ blockToCustom (OrderedList (num,sty,delim) items) =
   callFunc "OrderedList" (map Stringify items) num (show sty) (show delim)
 
 blockToCustom (DefinitionList items) =
-  callFunc "DefinitionList" (map (Stringify *** map Stringify) items)
+  callFunc "DefinitionList"
+           (map (KeyValue . (Stringify *** map Stringify)) items)
 
 blockToCustom (Div attr items) =
   callFunc "Div" (Stringify items) (attrToMap attr)

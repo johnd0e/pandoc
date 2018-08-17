@@ -1,9 +1,10 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE CPP                 #-}
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE PatternGuards       #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-
-Copyright (C) 2010-2017 John MacFarlane <jgm@berkeley.edu>
+Copyright (C) 2010-2018 John MacFarlane <jgm@berkeley.edu>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -22,7 +23,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 {- |
    Module      : Text.Pandoc.Writers.EPUB
-   Copyright   : Copyright (C) 2010-2017 John MacFarlane
+   Copyright   : Copyright (C) 2010-2018 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -32,6 +33,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 Conversion of 'Pandoc' documents to EPUB.
 -}
 module Text.Pandoc.Writers.EPUB ( writeEPUB2, writeEPUB3 ) where
+import Prelude
 import Codec.Archive.Zip (Entry, addEntryToArchive, eRelativePath, emptyArchive,
                           fromArchive, fromEntry, toEntry)
 import Control.Monad (mplus, unless, when, zipWithM)
@@ -53,7 +55,7 @@ import Text.HTML.TagSoup (Tag (TagOpen), fromAttrib, parseTags)
 import Text.Pandoc.Builder (fromList, setMeta)
 import Text.Pandoc.Class (PandocMonad, report)
 import qualified Text.Pandoc.Class as P
-import Text.Pandoc.Compat.Time
+import Data.Time
 import Text.Pandoc.Definition
 import Text.Pandoc.Error
 import Text.Pandoc.Logging
@@ -72,6 +74,7 @@ import Text.Printf (printf)
 import Text.XML.Light (Attr (..), Element (..), Node (..), QName (..),
                        add_attrs, lookupAttr, node, onlyElems, parseXML,
                        ppElement, showElement, strContent, unode, unqual)
+import Text.Pandoc.XML (escapeStringForXML)
 
 -- A Chapter includes a list of blocks and maybe a section
 -- number offset.  Note, some chapters are unnumbered. The section
@@ -401,6 +404,12 @@ pandocToEPUB version opts doc@(Pandoc meta _) = do
                       writeHtmlStringForEPUB version o
   metadata <- getEPUBMetadata opts meta
 
+  let plainTitle = case docTitle' meta of
+                        [] -> case epubTitle metadata of
+                                   []    -> "UNTITLED"
+                                   (x:_) -> titleText x
+                        x  -> stringify x
+
   -- stylesheet
   stylesheets <- case epubStylesheets metadata of
                       [] -> (\x -> [B.fromChunks [x]]) <$>
@@ -438,6 +447,8 @@ pandocToEPUB version opts doc@(Pandoc meta _) = do
                        cpContent <- lift $ writeHtml
                             opts'{ writerVariables =
                                     ("coverpage","true"):
+                                    ("pagetitle",
+                                       escapeStringForXML plainTitle):
                                      cssvars True ++ vars }
                             (Pandoc meta [RawBlock (Format "html") $ "<div id=\"cover-image\">\n<img src=\"../media/" ++ coverImage ++ "\" alt=\"cover image\" />\n</div>"])
                        imgContent <- lift $ P.readFileLazy img
@@ -450,6 +461,7 @@ pandocToEPUB version opts doc@(Pandoc meta _) = do
   -- title page
   tpContent <- lift $ writeHtml opts'{
                                   writerVariables = ("titlepage","true"):
+                                  ("pagetitle", escapeStringForXML plainTitle):
                                   cssvars True ++ vars }
                                (Pandoc meta [])
   tpEntry <- mkEntry "text/title_page.xhtml" tpContent
@@ -458,7 +470,7 @@ pandocToEPUB version opts doc@(Pandoc meta _) = do
   -- mediaRef <- P.newIORef []
   Pandoc _ blocks <- walkM (transformInline opts') doc >>=
                      walkM transformBlock
-  picEntries <- (mapMaybe (snd . snd)) <$> gets stMediaPaths
+  picEntries <- mapMaybe (snd . snd) <$> gets stMediaPaths
   -- handle fonts
   let matchingGlob f = do
         xs <- lift $ P.glob f
@@ -602,11 +614,6 @@ pandocToEPUB version opts doc@(Pandoc meta _) = do
                                      $ eRelativePath ent),
                             ("media-type", fromMaybe "" $
                                   getMimeType $ eRelativePath ent)] $ ()
-  let plainTitle = case docTitle' meta of
-                        [] -> case epubTitle metadata of
-                                   []    -> "UNTITLED"
-                                   (x:_) -> titleText x
-                        x  -> stringify x
 
   let tocTitle = fromMaybe plainTitle $
                    metaValueToString <$> lookupMeta "toc-title" meta
@@ -747,14 +754,19 @@ pandocToEPUB version opts doc@(Pandoc meta _) = do
           where titElements = parseXML titRendered
                 titRendered = case P.runPure
                                (writeHtmlStringForEPUB version
-                                 opts{ writerTemplate = Nothing }
+                                 opts{ writerTemplate = Nothing
+                                     , writerVariables =
+                                       ("pagetitle",
+                                         escapeStringForXML plainTitle):
+                                       writerVariables opts}
                                  (Pandoc nullMeta
-                                   [Plain $ walk delink tit])) of
+                                   [Plain $ walk clean tit])) of
                                 Left _  -> TS.pack $ stringify tit
                                 Right x -> x
-                -- can't have a element inside a...
-                delink (Link _ ils _) = Span ("", [], []) ils
-                delink x              = x
+                -- can't have <a> elements inside generated links...
+                clean (Link _ ils _) = Span ("", [], []) ils
+                clean (Note _)       = Str ""
+                clean x              = x
 
   let navtag = if epub3 then "nav" else "div"
   tocBlocks <- lift $ evalStateT (mapM (navPointNode navXhtmlFormatter) secs) 1
@@ -872,7 +884,7 @@ metadataElement version md currentTime =
         dcTag' n s = [dcTag n s]
         toIdentifierNode id' (Identifier txt scheme)
           | version == EPUB2 = [dcNode "identifier" !
-              ([("id",id')] ++ maybe [] (\x -> [("opf:scheme", x)]) scheme) $
+              (("id",id') : maybe [] (\x -> [("opf:scheme", x)]) scheme) $
               txt]
           | otherwise = [dcNode "identifier" ! [("id",id')] $ txt] ++
               maybe [] (\x -> [unode "meta" !

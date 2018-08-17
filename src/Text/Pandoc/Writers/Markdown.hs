@@ -1,9 +1,10 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE MultiWayIf          #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections       #-}
 {-
-Copyright (C) 2006-2017 John MacFarlane <jgm@berkeley.edu>
+Copyright (C) 2006-2018 John MacFarlane <jgm@berkeley.edu>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -22,7 +23,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 {- |
    Module      : Text.Pandoc.Writers.Markdown
-   Copyright   : Copyright (C) 2006-2017 John MacFarlane
+   Copyright   : Copyright (C) 2006-2018 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -34,9 +35,10 @@ Conversion of 'Pandoc' documents to markdown-formatted plain text.
 Markdown:  <http://daringfireball.net/projects/markdown/>
 -}
 module Text.Pandoc.Writers.Markdown (writeMarkdown, writePlain) where
+import Prelude
 import Control.Monad.Reader
 import Control.Monad.State.Strict
-import Data.Char (chr, isPunctuation, isSpace, ord)
+import Data.Char (chr, isPunctuation, isSpace, ord, isAlphaNum)
 import Data.Default
 import qualified Data.HashMap.Strict as H
 import Data.List (find, group, intersperse, sortBy, stripPrefix, transpose)
@@ -48,7 +50,7 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Vector as V
-import Data.Yaml (Value (Array, Bool, Number, Object, String))
+import Data.Aeson (Value (Array, Bool, Number, Object, String))
 import Network.HTTP (urlEncode)
 import Text.HTML.TagSoup (Tag (..), isTagText, parseTags)
 import Text.Pandoc.Class (PandocMonad, report)
@@ -286,6 +288,12 @@ escapeString opts (c:cs) =
        '>' | isEnabled Ext_all_symbols_escapable opts ->
               '\\' : '>' : escapeString opts cs
            | otherwise -> "&gt;" ++ escapeString opts cs
+       '@' | isEnabled Ext_citations opts ->
+               case cs of
+                    (d:_)
+                      | isAlphaNum d || d == '_'
+                         -> '\\':'@':escapeString opts cs
+                    _ -> '@':escapeString opts cs
        _ | c `elem` ['\\','`','*','_','[',']','#'] ->
               '\\':c:escapeString opts cs
        '|' | isEnabled Ext_pipe_tables opts -> '\\':'|':escapeString opts cs
@@ -444,8 +452,14 @@ blockToMarkdown' opts (Plain inlines) = do
               | otherwise -> contents
   return $ contents' <> cr
 -- title beginning with fig: indicates figure
-blockToMarkdown' opts (Para [Image attr alt (src,'f':'i':'g':':':tit)]) =
-  blockToMarkdown opts (Para [Image attr alt (src,tit)])
+blockToMarkdown' opts (Para [Image attr alt (src,'f':'i':'g':':':tit)])
+  | isEnabled Ext_raw_html opts &&
+    not (isEnabled Ext_link_attributes opts) &&
+    attr /= nullAttr = -- use raw HTML
+    (text . T.unpack . T.strip) <$>
+      writeHtml5String opts{ writerTemplate = Nothing }
+        (Pandoc nullMeta [Para [Image attr alt (src,"fig:" ++ tit)]])
+  | otherwise = blockToMarkdown opts (Para [Image attr alt (src,tit)])
 blockToMarkdown' opts (Para inlines) =
   (<> blankline) `fmap` blockToMarkdown opts (Plain inlines)
 blockToMarkdown' opts (LineBlock lns) =
@@ -611,7 +625,7 @@ blockToMarkdown' opts t@(Table caption aligns widths headers rows) =  do
                   (all null headers) aligns' widths' headers rows
             | isEnabled Ext_raw_html opts -> fmap (id,) $
                    (text . T.unpack) <$>
-                   (writeHtml5String def $ Pandoc nullMeta [t])
+                   (writeHtml5String opts{ writerTemplate = Nothing } $ Pandoc nullMeta [t])
             | hasSimpleCells &&
               isEnabled Ext_pipe_tables opts -> do
                 rawHeaders <- padRow <$> mapM (blockListToMarkdown opts) headers
@@ -701,7 +715,7 @@ pandocTable opts multiline headless aligns widths rawHeaders rawRows = do
   let columns = transpose (rawHeaders : rawRows)
   -- minimal column width without wrapping a single word
   let relWidth w col =
-         max (floor $ fromIntegral (writerColumns opts) * w)
+         max (floor $ fromIntegral (writerColumns opts - 1) * w)
              (if writerWrapText opts == WrapAuto
                  then minNumChars col
                  else numChars col)
@@ -724,7 +738,10 @@ pandocTable opts multiline headless aligns widths rawHeaders rawRows = do
                   then empty
                   else border <> cr <> head'
   let body = if multiline
-                then vsep rows'
+                then vsep rows' $$
+                     if length rows' < 2
+                        then blankline -- #4578
+                        else empty
                 else vcat rows'
   let bottom = if headless
                   then underline
@@ -965,6 +982,11 @@ isRight (Left  _) = False
 
 -- | Convert Pandoc inline element to markdown.
 inlineToMarkdown :: PandocMonad m => WriterOptions -> Inline -> MD m Doc
+inlineToMarkdown opts (Span ("",["emoji"],kvs) [Str s]) = do
+  case lookup "data-emoji" kvs of
+       Just emojiname | isEnabled Ext_emoji opts ->
+            return $ ":" <> text emojiname <> ":"
+       _ -> inlineToMarkdown opts (Str s)
 inlineToMarkdown opts (Span attrs ils) = do
   plain <- asks envPlain
   contents <- inlineListToMarkdown opts ils
@@ -1161,7 +1183,7 @@ inlineToMarkdown opts lnk@(Link attr txt (src, tit))
     not (isEnabled Ext_link_attributes opts) &&
     attr /= nullAttr = -- use raw HTML
     (text . T.unpack . T.strip) <$>
-      writeHtml5String def (Pandoc nullMeta [Plain [lnk]])
+      writeHtml5String opts{ writerTemplate = Nothing } (Pandoc nullMeta [Plain [lnk]])
   | otherwise = do
   plain <- asks envPlain
   linktext <- inlineListToMarkdown opts txt
@@ -1201,7 +1223,7 @@ inlineToMarkdown opts img@(Image attr alternate (source, tit))
     not (isEnabled Ext_link_attributes opts) &&
     attr /= nullAttr = -- use raw HTML
     (text . T.unpack . T.strip) <$>
-      writeHtml5String def (Pandoc nullMeta [Plain [img]])
+      writeHtml5String opts{ writerTemplate = Nothing } (Pandoc nullMeta [Plain [img]])
   | otherwise = do
   plain <- asks envPlain
   let txt = if null alternate || alternate == [Str source]

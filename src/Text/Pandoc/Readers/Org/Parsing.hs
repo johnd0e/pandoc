@@ -1,5 +1,6 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-
-Copyright (C) 2014-2017 Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
+Copyright (C) 2014-2018 Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -18,7 +19,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 {- |
    Module      : Text.Pandoc.Readers.Org.Parsing
-   Copyright   : Copyright (C) 2014-2017 Albert Krewinkel
+   Copyright   : Copyright (C) 2014-2018 Albert Krewinkel
    License     : GNU GPL, version 2 or above
 
    Maintainer  : Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
@@ -112,6 +113,7 @@ module Text.Pandoc.Readers.Org.Parsing
   , getPosition
   ) where
 
+import Prelude
 import Text.Pandoc.Readers.Org.ParserState
 
 import Text.Pandoc.Parsing hiding (F, anyLine, blanklines, newline,
@@ -135,14 +137,13 @@ anyLine =
     <* updateLastPreCharPos
     <* updateLastForbiddenCharPos
 
--- The version Text.Pandoc.Parsing cannot be used, as we need additional parts
--- of the state saved and restored.
+-- | Like @'Text.Pandoc.Parsing'@, but resets the position of the last character
+-- allowed before emphasised text.
 parseFromString :: Monad m => OrgParser m a -> String -> OrgParser m a
 parseFromString parser str' = do
-  oldLastPreCharPos <- orgStateLastPreCharPos <$> getState
   updateState $ \s -> s{ orgStateLastPreCharPos = Nothing }
   result <- P.parseFromString parser str'
-  updateState $ \s -> s{ orgStateLastPreCharPos = oldLastPreCharPos }
+  updateState $ \s -> s { orgStateLastPreCharPos = Nothing }
   return result
 
 -- | Skip one or more tab or space characters.

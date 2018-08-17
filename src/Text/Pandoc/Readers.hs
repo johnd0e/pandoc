@@ -1,8 +1,9 @@
-{-# LANGUAGE FlexibleInstances   #-}
-{-# LANGUAGE GADTs               #-}
+{-# LANGUAGE MonoLocalBinds      #-}
+{-# LANGUAGE NoImplicitPrelude   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+
 {-
-Copyright (C) 2006-2017 John MacFarlane <jgm@berkeley.edu>
+Copyright (C) 2006-2018 John MacFarlane <jgm@berkeley.edu>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -21,7 +22,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 {- |
    Module      : Text.Pandoc.Readers
-   Copyright   : Copyright (C) 2006-2017 John MacFarlane
+   Copyright   : Copyright (C) 2006-2018 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -64,11 +65,13 @@ module Text.Pandoc.Readers
   , readTxt2Tags
   , readEPUB
   , readMuse
+  , readFB2
   -- * Miscellaneous
   , getReader
   , getDefaultExtensions
   ) where
 
+import Prelude
 import Control.Monad.Except (throwError)
 import Data.Aeson
 import qualified Data.ByteString.Lazy as BL
@@ -84,6 +87,7 @@ import Text.Pandoc.Readers.Creole
 import Text.Pandoc.Readers.DocBook
 import Text.Pandoc.Readers.Docx
 import Text.Pandoc.Readers.EPUB
+import Text.Pandoc.Readers.FB2
 import Text.Pandoc.Readers.Haddock
 import Text.Pandoc.Readers.HTML (readHtml)
 import Text.Pandoc.Readers.JATS (readJATS)
@@ -141,6 +145,7 @@ readers = [ ("native"       , TextReader readNative)
            ,("t2t"          , TextReader readTxt2Tags)
            ,("epub"         , ByteStringReader readEPUB)
            ,("muse"         , TextReader readMuse)
+           ,("fb2"          , TextReader readFB2)
            ]
 
 -- | Retrieve reader, extensions based on formatSpec (format+extensions).
